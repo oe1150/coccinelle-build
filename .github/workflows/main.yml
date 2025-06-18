@@ -83,7 +83,7 @@ jobs:
         
         # 創建修復的 spatch 腳本
         echo "Creating fixed spatch script..."
-        cat > portable-coccinelle/bin/spatch.fixed << 'SPATCH_SCRIPT'
+        cat > portable-coccinelle/bin/spatch.fixed << 'EOF'
 #!/bin/bash
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 COCCINELLE_ROOT="$(dirname "$SCRIPT_DIR")"
@@ -108,12 +108,12 @@ echo "Error: Cannot find spatch executable"
 echo "Available files:"
 find "$COCCINELLE_ROOT" -name "*spatch*" -type f
 exit 1
-SPATCH_SCRIPT
+EOF
         
         chmod +x portable-coccinelle/bin/spatch.fixed
         
         # 也創建修復的主啟動腳本
-        cat > portable-coccinelle/spatch.sh << 'MAIN_SCRIPT'
+        cat > portable-coccinelle/spatch.sh << 'EOF2'
 #!/bin/bash
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
@@ -127,7 +127,7 @@ else
     echo "Error: spatch.fixed not found"
     exit 1
 fi
-MAIN_SCRIPT
+EOF2
         
         chmod +x portable-coccinelle/spatch.sh
         
