@@ -122,12 +122,11 @@ jobs:
         echo "1. Add a step to upload to external storage (like transfer.sh)"
         echo "2. Or modify this workflow to use upload-artifact with a newer base image"
         
+        # 安裝 curl 用於上傳
+        apt-get install -y curl
+        
         # 上傳到 transfer.sh (臨時文件分享服務)
         echo "Uploading to transfer.sh for easy download..."
-        curl --upload-file coccinelle-ubuntu16-portable.tar.gz https://transfer.sh/coccinelle-ubuntu16-portable.tar.gz || echo "Transfer.sh upload failed"
-    - name: Try upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-ubuntu16-portable
-        path: coccinelle-ubuntu16-portable.tar.gz
-      continue-on-error: true
+        DOWNLOAD_URL=$(curl --upload-file coccinelle-ubuntu16-portable.tar.gz https://transfer.sh/coccinelle-ubuntu16-portable.tar.gz)
+        echo "Download URL: $DOWNLOAD_URL"
+        echo "::notice title=Download URL::$DOWNLOAD_URL"
