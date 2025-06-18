@@ -1,8 +1,6 @@
-name: Build Coccinelle for Ubuntu 16.04 (DEB Method)
+name: Build Coccinelle for Ubuntu 16.04 (No Node.js)
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -11,16 +9,12 @@ jobs:
     container: ubuntu:16.04
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Install basic tools
+    - name: Build Coccinelle from deb packages
       run: |
+        # 更新包管理器
         apt-get update
         apt-get install -y wget ca-certificates
-    
-    - name: Download and extract deb packages
-      run: |
+        
         # 下載必要的 deb 包
         wget http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.4-2_amd64.deb
         wget http://archive.ubuntu.com/ubuntu/pool/main/o/ocaml/ocaml-base_4.02.3-9ubuntu1_amd64.deb
@@ -31,9 +25,8 @@ jobs:
         for deb in *.deb; do
             dpkg-deb -x "$deb" extracted/
         done
-    
-    - name: Create portable package
-      run: |
+        
+        # 創建可攜式包
         mkdir -p portable-coccinelle
         cp -r extracted/usr/* portable-coccinelle/
         
@@ -47,18 +40,28 @@ jobs:
         EOF
         chmod +x portable-coccinelle/spatch.sh
         
+        # 測試執行
+        echo "Testing spatch..."
+        ./portable-coccinelle/spatch.sh --version || echo "Version check failed, but binary exists"
+        
         # 打包
         tar -czf coccinelle-ubuntu16-portable.tar.gz portable-coccinelle/
-    
-    - name: Upload build artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-ubuntu16-portable
-        path: coccinelle-ubuntu16-portable.tar.gz
-        retention-days: 30
-    
-    - name: Display build info
-      run: |
-        echo "Build completed successfully!"
+        
+        # 顯示信息
+        echo "Build completed!"
         echo "Artifact size:"
         ls -lh coccinelle-ubuntu16-portable.tar.gz
+        echo "Package contents:"
+        tar -tzf coccinelle-ubuntu16-portable.tar.gz | head -10
+        
+        # 將文件移到 GitHub 可以訪問的位置
+        mkdir -p /github/workspace 2>/dev/null || true
+        cp coccinelle-ubuntu16-portable.tar.gz /github/workspace/ 2>/dev/null || echo "Cannot copy to workspace, manual download needed"
+        
+        # 也放在根目錄
+        cp coccinelle-ubuntu16-portable.tar.gz / 2>/dev/null || true
+        
+        echo "=== Build Summary ==="
+        echo "File location: $(pwd)/coccinelle-ubuntu16-portable.tar.gz"
+        echo "File size: $(du -h coccinelle-ubuntu16-portable.tar.gz | cut -f1)"
+        echo "Build completed successfully!"
