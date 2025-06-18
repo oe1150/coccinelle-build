@@ -1,10 +1,9 @@
-name: Build Coccinelle for Ubuntu 16.04
+name: Build Coccinelle for Ubuntu 16.04 (DEB Method)
 
-# 觸發條件：當推送代碼或手動觸發時
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 允許手動觸發
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,48 +14,34 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Install dependencies
+    - name: Install basic tools
       run: |
         apt-get update
-        apt-get install -y \
-          build-essential \
-          ocaml \
-          ocaml-native-compilers \
-          camlp4-extra \
-          wget \
-          libpcre3-dev \
-          pkg-config
+        apt-get install -y wget ca-certificates
     
-    - name: Download Coccinelle source
+    - name: Download and extract deb packages
       run: |
-        wget https://coccinelle.gitlabpages.inria.fr/website/distrib/coccinelle-1.0.8.tar.gz
-        tar -xzf coccinelle-1.0.8.tar.gz
-    
-    - name: Configure and build Coccinelle
-      run: |
-        cd coccinelle-1.0.8
-        ./configure --prefix=/opt/coccinelle
-        make
-        make install
+        # 下載必要的 deb 包
+        wget http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.4-2_amd64.deb
+        wget http://archive.ubuntu.com/ubuntu/pool/main/o/ocaml/ocaml-base_4.02.3-9ubuntu1_amd64.deb
+        wget http://archive.ubuntu.com/ubuntu/pool/main/o/ocaml/ocaml-interp_4.02.3-9ubuntu1_amd64.deb
+        
+        # 解壓所有 deb 包
+        mkdir -p extracted
+        for deb in *.deb; do
+            dpkg-deb -x "$deb" extracted/
+        done
     
     - name: Create portable package
       run: |
-        # 創建可攜式包
-        mkdir -p portable-coccinelle/bin
-        mkdir -p portable-coccinelle/lib
-        mkdir -p portable-coccinelle/share
-        
-        # 複製執行檔
-        cp -r /opt/coccinelle/* portable-coccinelle/
-        
-        # 複製必要的庫文件
-        cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/ || true
+        mkdir -p portable-coccinelle
+        cp -r extracted/usr/* portable-coccinelle/
         
         # 創建啟動腳本
         cat > portable-coccinelle/spatch.sh << 'EOF'
         #!/bin/bash
         SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
         export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
         "$SCRIPT_DIR/bin/spatch" "$@"
         EOF
@@ -77,5 +62,3 @@ jobs:
         echo "Build completed successfully!"
         echo "Artifact size:"
         ls -lh coccinelle-ubuntu16-portable.tar.gz
-        echo "Contents:"
-        tar -tzf coccinelle-ubuntu16-portable.tar.gz | head -20
