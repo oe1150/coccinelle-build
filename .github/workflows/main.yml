@@ -93,38 +93,32 @@ jobs:
         
         echo "Creating release with tag: $RELEASE_TAG"
         
-        RELEASE_BODY="# Coccinelle Portable Package
-
-        ## Version Information
-        - Coccinelle Version: $(spatch --version | head -1)
-        - Build Date: $(date)
-        - Build From: Ubuntu 18.04
-        - Supports: Python, PCRE
-
-        ## Download and Usage
-        1. Download \`coccinelle-portable.tar.gz\`
-        2. Extract: \`tar -xzf coccinelle-portable.tar.gz\`
-        3. Use: \`cd portable-coccinelle && ./spatch.sh --version\`
-
-        ## Compatibility
-        - Ubuntu 16.04+
-        - Debian 9+
-        - Other compatible Linux distributions
-
-        Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
+        # 創建簡化的 release body
+        COCCINELLE_VERSION=$(spatch --version | head -1)
+        BUILD_DATE=$(date)
+        PACKAGE_SIZE=$(du -h coccinelle-portable.tar.gz | cut -f1)
+        
+        # 使用 jq 或手動創建正確的 JSON
+        cat > release_data.json << JSONEOF
+{
+  "tag_name": "$RELEASE_TAG",
+  "target_commitish": "main",
+  "name": "$RELEASE_NAME",
+  "body": "# Coccinelle Portable Package\\n\\n## Version Information\\n- Coccinelle Version: $COCCINELLE_VERSION\\n- Build Date: $BUILD_DATE\\n- Build From: Ubuntu 18.04\\n- Supports: Python, PCRE\\n\\n## Download and Usage\\n1. Download coccinelle-portable.tar.gz\\n2. Extract: tar -xzf coccinelle-portable.tar.gz\\n3. Use: cd portable-coccinelle && ./spatch.sh --version\\n\\n## Compatibility\\n- Ubuntu 16.04+\\n- Debian 9+\\n- Other compatible Linux distributions\\n\\nPackage size: $PACKAGE_SIZE",
+  "draft": false,
+  "prerelease": false
+}
+JSONEOF
+        
+        echo "JSON payload created:"
+        cat release_data.json
         
         RELEASE_RESPONSE=$(curl -s -X POST \
           -H "Authorization: token $GITHUB_TOKEN" \
           -H "Accept: application/vnd.github.v3+json" \
+          -H "Content-Type: application/json" \
           "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
-          -d "{
-            \"tag_name\": \"$RELEASE_TAG\",
-            \"target_commitish\": \"main\",
-            \"name\": \"$RELEASE_NAME\",
-            \"body\": \"$RELEASE_BODY\",
-            \"draft\": false,
-            \"prerelease\": false
-          }")
+          -d @release_data.json)
         
         UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
         RELEASE_HTML_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
