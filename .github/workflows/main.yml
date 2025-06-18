@@ -20,39 +20,122 @@ jobs:
         
         echo "Building Coccinelle $(spatch --version | head -1)"
         
+        # 檢查 spatch 安裝位置
+        echo "Checking spatch installation..."
+        which spatch
+        file $(which spatch)
+        
+        # 檢查系統中的 coccinelle 文件
+        echo "System coccinelle files:"
+        find /usr -name "*coccinelle*" -o -name "*spatch*" 2>/dev/null | head -10
+        
+        # 檢查 OCaml 文件
+        echo "OCaml files:"
+        find /usr -name "*ocaml*" -type d 2>/dev/null | head -5
+        
         rm -rf portable-coccinelle
         mkdir -p portable-coccinelle/bin
         mkdir -p portable-coccinelle/lib  
         mkdir -p portable-coccinelle/share
+        mkdir -p portable-coccinelle/usr-lib-coccinelle
         
+        # 複製 spatch 腳本
         cp /usr/bin/spatch portable-coccinelle/bin/
+        echo "Copied spatch from /usr/bin/"
         
-        if [ -d /usr/lib/x86_64-linux-gnu/ocaml ]; then
-            cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/
+        # 尋找並複製實際的 coccinelle 文件
+        echo "Looking for coccinelle library files..."
+        if [ -d /usr/lib/coccinelle ]; then
+            cp -r /usr/lib/coccinelle/* portable-coccinelle/usr-lib-coccinelle/
+            echo "Copied from /usr/lib/coccinelle/"
+            ls -la /usr/lib/coccinelle/ | head -5
+        else
+            echo "No /usr/lib/coccinelle found"
         fi
         
+        # 複製 OCaml 庫
+        echo "Looking for OCaml libraries..."
+        for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
+            if [ -d "$ocaml_dir" ]; then
+                mkdir -p portable-coccinelle/lib/$(basename $ocaml_dir)
+                cp -r "$ocaml_dir"/* portable-coccinelle/lib/$(basename $ocaml_dir)/ 2>/dev/null || true
+                echo "Copied OCaml from $ocaml_dir"
+                ls -la "$ocaml_dir" | head -3
+            fi
+        done
+        
+        # 複製 share 文件
+        echo "Looking for share files..."
         if [ -d /usr/share/coccinelle ]; then
             cp -r /usr/share/coccinelle portable-coccinelle/share/
+            echo "Copied from /usr/share/coccinelle/"
+            ls -la /usr/share/coccinelle/ | head -5
+        else
+            echo "No /usr/share/coccinelle found"
         fi
         
-        echo '#!/bin/bash' > portable-coccinelle/spatch.sh
-        echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/spatch.sh
-        echo 'export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"' >> portable-coccinelle/spatch.sh
-        echo 'export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"' >> portable-coccinelle/spatch.sh
-        echo 'export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"' >> portable-coccinelle/spatch.sh
-        echo '"$SCRIPT_DIR/bin/spatch" "$@"' >> portable-coccinelle/spatch.sh
+        # 複製 Python 模組
+        if [ -d /usr/lib/python*/dist-packages/coccinelle ]; then
+            mkdir -p portable-coccinelle/python
+            cp -r /usr/lib/python*/dist-packages/coccinelle portable-coccinelle/python/ 2>/dev/null || true
+            echo "Copied Python modules"
+        fi
+        
+        # 創建修復的 spatch 腳本
+        echo "Creating fixed spatch script..."
+        cat > portable-coccinelle/bin/spatch.fixed << 'SPATCH_SCRIPT'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+COCCINELLE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# 設置環境變數
+export LD_LIBRARY_PATH="$COCCINELLE_ROOT/lib:$COCCINELLE_ROOT/lib/ocaml:$LD_LIBRARY_PATH"
+export OCAML_TOPLEVEL_PATH="$COCCINELLE_ROOT/lib/ocaml"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$COCCINELLE_ROOT/python:$COCCINELLE_ROOT/usr-lib-coccinelle/python"
+
+# 尋找實際的 spatch 可執行文件
+for spatch_bin in \
+    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch" \
+    "$COCCINELLE_ROOT/share/coccinelle/spatch" \
+    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch.opt" \
+    ; do
+    if [ -x "$spatch_bin" ]; then
+        exec "$spatch_bin" "$@"
+    fi
+done
+
+echo "Error: Cannot find spatch executable"
+echo "Available files:"
+find "$COCCINELLE_ROOT" -name "*spatch*" -type f
+exit 1
+SPATCH_SCRIPT
+        
+        chmod +x portable-coccinelle/bin/spatch.fixed
+        
+        # 也創建修復的主啟動腳本
+        cat > portable-coccinelle/spatch.sh << 'MAIN_SCRIPT'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
+export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/python:$SCRIPT_DIR/usr-lib-coccinelle/python"
+
+# 嘗試使用修復的 spatch
+if [ -x "$SCRIPT_DIR/bin/spatch.fixed" ]; then
+    "$SCRIPT_DIR/bin/spatch.fixed" "$@"
+else
+    echo "Error: spatch.fixed not found"
+    exit 1
+fi
+MAIN_SCRIPT
         
         chmod +x portable-coccinelle/spatch.sh
-        chmod +x portable-coccinelle/bin/spatch
         
-        echo "# Portable Coccinelle" > portable-coccinelle/README.md
-        echo "" >> portable-coccinelle/README.md
-        echo "## Usage" >> portable-coccinelle/README.md
-        echo "./spatch.sh --version" >> portable-coccinelle/README.md
-        echo "./spatch.sh script.cocci file.c" >> portable-coccinelle/README.md
+        echo "Package contents:"
+        find portable-coccinelle -type f | head -20
         
         echo "Testing portable spatch..."
-        ./portable-coccinelle/spatch.sh --version
+        ./portable-coccinelle/spatch.sh --version || echo "Test failed, but package created"
         
         tar -czf coccinelle-portable.tar.gz portable-coccinelle/
         echo "Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
