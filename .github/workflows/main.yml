@@ -12,78 +12,46 @@ jobs:
     - name: Build Coccinelle package
       run: |
         export DEBIAN_FRONTEND=noninteractive
-        
         apt-get update -qq
         apt-get install -y -qq coccinelle tar curl ca-certificates
         
         echo "Building Coccinelle $(spatch --version | head -1)"
         
-        echo "Creating directory structure..."
         rm -rf portable-coccinelle
         mkdir -p portable-coccinelle/bin
-        mkdir -p portable-coccinelle/lib
+        mkdir -p portable-coccinelle/lib  
         mkdir -p portable-coccinelle/share
         
-        echo "Copying spatch binary..."
         cp /usr/bin/spatch portable-coccinelle/bin/
-        echo "spatch binary copied"
         
-        echo "Copying OCaml libraries..."
         if [ -d /usr/lib/x86_64-linux-gnu/ocaml ]; then
             cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/
-            echo "OCaml libraries copied"
         fi
         
-        echo "Copying Coccinelle configuration..."
         if [ -d /usr/share/coccinelle ]; then
             cp -r /usr/share/coccinelle portable-coccinelle/share/
-            echo "Coccinelle configuration copied"
         fi
         
-        echo "Creating launcher script..."
-        cat > portable-coccinelle/spatch.sh << 'LAUNCHER'
-        #!/bin/bash
-        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
-        export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-        export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"
-        "$SCRIPT_DIR/bin/spatch" "$@"
-        LAUNCHER
+        echo '#!/bin/bash' > portable-coccinelle/spatch.sh
+        echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/spatch.sh
+        echo 'export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"' >> portable-coccinelle/spatch.sh
+        echo 'export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"' >> portable-coccinelle/spatch.sh
+        echo 'export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"' >> portable-coccinelle/spatch.sh
+        echo '"$SCRIPT_DIR/bin/spatch" "$@"' >> portable-coccinelle/spatch.sh
         
         chmod +x portable-coccinelle/spatch.sh
         chmod +x portable-coccinelle/bin/spatch
-        echo "Launcher script created"
         
-        echo "Creating README..."
-        cat > portable-coccinelle/README.md << 'README'
-        # Portable Coccinelle
-        
-        ## Quick Start
-        ```bash
-        ./spatch.sh --version
-        ./spatch.sh script.cocci file.c
-        ```
-        
-        ## Installation
-        ```bash
-        tar -xzf coccinelle-portable.tar.gz
-        cd portable-coccinelle
-        ./spatch.sh --version
-        ```
-        
-        ## Adding to PATH
-        ```bash
-        export PATH=$PWD:$PATH
-        spatch.sh --version
-        ```
-        README
+        echo "# Portable Coccinelle" > portable-coccinelle/README.md
+        echo "" >> portable-coccinelle/README.md
+        echo "## Usage" >> portable-coccinelle/README.md
+        echo "./spatch.sh --version" >> portable-coccinelle/README.md
+        echo "./spatch.sh script.cocci file.c" >> portable-coccinelle/README.md
         
         echo "Testing portable spatch..."
         ./portable-coccinelle/spatch.sh --version
         
-        echo "Creating package..."
         tar -czf coccinelle-portable.tar.gz portable-coccinelle/
-        
         echo "Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
 
     - name: Create Release
@@ -91,68 +59,56 @@ jobs:
         RELEASE_TAG="coccinelle-$(date +%Y%m%d-%H%M%S)"
         RELEASE_NAME="Coccinelle Portable $(date +%Y-%m-%d)"
         
-        echo "Creating release with tag: $RELEASE_TAG"
+        echo "Creating release: $RELEASE_TAG"
         
-        # 創建簡化的 release body
-        COCCINELLE_VERSION=$(spatch --version | head -1)
-        BUILD_DATE=$(date)
-        PACKAGE_SIZE=$(du -h coccinelle-portable.tar.gz | cut -f1)
+        echo "{" > payload.json
+        echo "  \"tag_name\": \"$RELEASE_TAG\"," >> payload.json
+        echo "  \"target_commitish\": \"main\"," >> payload.json
+        echo "  \"name\": \"$RELEASE_NAME\"," >> payload.json
+        echo "  \"body\": \"Portable Coccinelle package built from Ubuntu 18.04. Extract and run ./spatch.sh --version\"," >> payload.json
+        echo "  \"draft\": false," >> payload.json
+        echo "  \"prerelease\": false" >> payload.json
+        echo "}" >> payload.json
         
-        # 使用 jq 或手動創建正確的 JSON
-        cat > release_data.json << JSONEOF
-{
-  "tag_name": "$RELEASE_TAG",
-  "target_commitish": "main",
-  "name": "$RELEASE_NAME",
-  "body": "# Coccinelle Portable Package\\n\\n## Version Information\\n- Coccinelle Version: $COCCINELLE_VERSION\\n- Build Date: $BUILD_DATE\\n- Build From: Ubuntu 18.04\\n- Supports: Python, PCRE\\n\\n## Download and Usage\\n1. Download coccinelle-portable.tar.gz\\n2. Extract: tar -xzf coccinelle-portable.tar.gz\\n3. Use: cd portable-coccinelle && ./spatch.sh --version\\n\\n## Compatibility\\n- Ubuntu 16.04+\\n- Debian 9+\\n- Other compatible Linux distributions\\n\\nPackage size: $PACKAGE_SIZE",
-  "draft": false,
-  "prerelease": false
-}
-JSONEOF
-        
-        echo "JSON payload created:"
-        cat release_data.json
+        echo "JSON payload:"
+        cat payload.json
         
         RELEASE_RESPONSE=$(curl -s -X POST \
           -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Accept: application/vnd.github.v3+json" \
           -H "Content-Type: application/json" \
           "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
-          -d @release_data.json)
+          -d @payload.json)
+        
+        echo "Release response:"
+        echo "$RELEASE_RESPONSE"
         
         UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
         RELEASE_HTML_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
         
         if [ -z "$UPLOAD_URL" ]; then
           echo "Failed to create release"
-          echo "Response: $RELEASE_RESPONSE"
           exit 1
         fi
         
-        echo "Release created successfully!"
-        echo "Release URL: $RELEASE_HTML_URL"
+        echo "Release created: $RELEASE_HTML_URL"
+        echo "Uploading file..."
         
-        echo "Uploading file to release..."
         UPLOAD_RESPONSE=$(curl -s -X POST \
           -H "Authorization: token $GITHUB_TOKEN" \
           -H "Content-Type: application/gzip" \
           --data-binary @coccinelle-portable.tar.gz \
-          "${UPLOAD_URL}?name=coccinelle-portable.tar.gz&label=Coccinelle Portable Package")
+          "${UPLOAD_URL}?name=coccinelle-portable.tar.gz")
         
         DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
         
+        echo "========================================="
+        echo "SUCCESS!"
+        echo "========================================="
+        echo "Release Page: $RELEASE_HTML_URL"
         if [ -n "$DOWNLOAD_URL" ]; then
-          echo "========================================="
-          echo "RELEASE PUBLISHED!"
-          echo "========================================="
           echo "Download URL: $DOWNLOAD_URL"
-          echo "Release Page: $RELEASE_HTML_URL"
-          echo "Tag: $RELEASE_TAG"
-          echo "File Size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
-          echo "========================================="
-        else
-          echo "Failed to upload file"
-          echo "But release was created at: $RELEASE_HTML_URL"
         fi
+        echo "Tag: $RELEASE_TAG"
+        echo "========================================="
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
