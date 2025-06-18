@@ -83,51 +83,48 @@ jobs:
         
         # 創建修復的 spatch 腳本
         echo "Creating fixed spatch script..."
-        cat > portable-coccinelle/bin/spatch.fixed << 'EOF'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-COCCINELLE_ROOT="$(dirname "$SCRIPT_DIR")"
-
-# 設置環境變數
-export LD_LIBRARY_PATH="$COCCINELLE_ROOT/lib:$COCCINELLE_ROOT/lib/ocaml:$LD_LIBRARY_PATH"
-export OCAML_TOPLEVEL_PATH="$COCCINELLE_ROOT/lib/ocaml"
-export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$COCCINELLE_ROOT/python:$COCCINELLE_ROOT/usr-lib-coccinelle/python"
-
-# 尋找實際的 spatch 可執行文件
-for spatch_bin in \
-    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch" \
-    "$COCCINELLE_ROOT/share/coccinelle/spatch" \
-    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch.opt" \
-    ; do
-    if [ -x "$spatch_bin" ]; then
-        exec "$spatch_bin" "$@"
-    fi
-done
-
-echo "Error: Cannot find spatch executable"
-echo "Available files:"
-find "$COCCINELLE_ROOT" -name "*spatch*" -type f
-exit 1
-EOF
+        echo '#!/bin/bash' > portable-coccinelle/bin/spatch.fixed
+        echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/bin/spatch.fixed
+        echo 'COCCINELLE_ROOT="$(dirname "$SCRIPT_DIR")"' >> portable-coccinelle/bin/spatch.fixed
+        echo '' >> portable-coccinelle/bin/spatch.fixed
+        echo '# 設置環境變數' >> portable-coccinelle/bin/spatch.fixed
+        echo 'export LD_LIBRARY_PATH="$COCCINELLE_ROOT/lib:$COCCINELLE_ROOT/lib/ocaml:$LD_LIBRARY_PATH"' >> portable-coccinelle/bin/spatch.fixed
+        echo 'export OCAML_TOPLEVEL_PATH="$COCCINELLE_ROOT/lib/ocaml"' >> portable-coccinelle/bin/spatch.fixed
+        echo 'export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$COCCINELLE_ROOT/python:$COCCINELLE_ROOT/usr-lib-coccinelle/python"' >> portable-coccinelle/bin/spatch.fixed
+        echo '' >> portable-coccinelle/bin/spatch.fixed
+        echo '# 尋找實際的 spatch 可執行文件' >> portable-coccinelle/bin/spatch.fixed
+        echo 'for spatch_bin in \' >> portable-coccinelle/bin/spatch.fixed
+        echo '    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch" \' >> portable-coccinelle/bin/spatch.fixed
+        echo '    "$COCCINELLE_ROOT/share/coccinelle/spatch" \' >> portable-coccinelle/bin/spatch.fixed
+        echo '    "$COCCINELLE_ROOT/usr-lib-coccinelle/spatch.opt" \' >> portable-coccinelle/bin/spatch.fixed
+        echo '    ; do' >> portable-coccinelle/bin/spatch.fixed
+        echo '    if [ -x "$spatch_bin" ]; then' >> portable-coccinelle/bin/spatch.fixed
+        echo '        exec "$spatch_bin" "$@"' >> portable-coccinelle/bin/spatch.fixed
+        echo '    fi' >> portable-coccinelle/bin/spatch.fixed
+        echo 'done' >> portable-coccinelle/bin/spatch.fixed
+        echo '' >> portable-coccinelle/bin/spatch.fixed
+        echo 'echo "Error: Cannot find spatch executable"' >> portable-coccinelle/bin/spatch.fixed
+        echo 'echo "Available files:"' >> portable-coccinelle/bin/spatch.fixed
+        echo 'find "$COCCINELLE_ROOT" -name "*spatch*" -type f' >> portable-coccinelle/bin/spatch.fixed
+        echo 'exit 1' >> portable-coccinelle/bin/spatch.fixed
         
         chmod +x portable-coccinelle/bin/spatch.fixed
         
-        # 也創建修復的主啟動腳本
-        cat > portable-coccinelle/spatch.sh << 'EOF2'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
-export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/python:$SCRIPT_DIR/usr-lib-coccinelle/python"
-
-# 嘗試使用修復的 spatch
-if [ -x "$SCRIPT_DIR/bin/spatch.fixed" ]; then
-    "$SCRIPT_DIR/bin/spatch.fixed" "$@"
-else
-    echo "Error: spatch.fixed not found"
-    exit 1
-fi
-EOF2
+        # 創建主啟動腳本
+        echo "Creating main launcher script..."
+        echo '#!/bin/bash' > portable-coccinelle/spatch.sh
+        echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/spatch.sh
+        echo 'export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"' >> portable-coccinelle/spatch.sh
+        echo 'export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"' >> portable-coccinelle/spatch.sh
+        echo 'export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/python:$SCRIPT_DIR/usr-lib-coccinelle/python"' >> portable-coccinelle/spatch.sh
+        echo '' >> portable-coccinelle/spatch.sh
+        echo '# 嘗試使用修復的 spatch' >> portable-coccinelle/spatch.sh
+        echo 'if [ -x "$SCRIPT_DIR/bin/spatch.fixed" ]; then' >> portable-coccinelle/spatch.sh
+        echo '    "$SCRIPT_DIR/bin/spatch.fixed" "$@"' >> portable-coccinelle/spatch.sh
+        echo 'else' >> portable-coccinelle/spatch.sh
+        echo '    echo "Error: spatch.fixed not found"' >> portable-coccinelle/spatch.sh
+        echo '    exit 1' >> portable-coccinelle/spatch.sh
+        echo 'fi' >> portable-coccinelle/spatch.sh
         
         chmod +x portable-coccinelle/spatch.sh
         
