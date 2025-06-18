@@ -22,43 +22,76 @@ jobs:
         echo "Building Coccinelle $(spatch --version | head -1)"
         
         # 創建可攜式包
-        mkdir -p portable-coccinelle/{bin,lib,share}
+        echo "📁 Creating directory structure..."
+        rm -rf portable-coccinelle
+        mkdir -p portable-coccinelle/bin
+        mkdir -p portable-coccinelle/lib
+        mkdir -p portable-coccinelle/share
+        
+        echo "Directory structure created:"
+        ls -la portable-coccinelle/
         
         # 複製文件
+        echo "📋 Copying spatch binary..."
         cp /usr/bin/spatch portable-coccinelle/bin/
-        cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/ 2>/dev/null || true
-        cp -r /usr/share/coccinelle portable-coccinelle/share/ 2>/dev/null || true
+        echo "✅ spatch binary copied"
+        
+        echo "📋 Copying OCaml libraries..."
+        if [ -d /usr/lib/x86_64-linux-gnu/ocaml ]; then
+            cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/
+            echo "✅ OCaml libraries copied"
+        else
+            echo "⚠️ OCaml libraries not found in expected location"
+        fi
+        
+        echo "📋 Copying Coccinelle configuration..."
+        if [ -d /usr/share/coccinelle ]; then
+            cp -r /usr/share/coccinelle portable-coccinelle/share/
+            echo "✅ Coccinelle configuration copied"
+        else
+            echo "⚠️ Coccinelle configuration not found"
+        fi
         
         # 創建啟動腳本
+        echo "📝 Creating launcher script..."
         cat > portable-coccinelle/spatch.sh << 'EOF'
-        #!/bin/bash
-        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
-        export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-        export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"
-        "$SCRIPT_DIR/bin/spatch" "$@"
-        EOF
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
+export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"
+"$SCRIPT_DIR/bin/spatch" "$@"
+EOF
         chmod +x portable-coccinelle/spatch.sh
+        chmod +x portable-coccinelle/bin/spatch
+        echo "✅ Launcher script created"
         
         # 創建 README
+        echo "📖 Creating README..."
         cat > portable-coccinelle/README.md << 'EOF'
-        # Portable Coccinelle
+# Portable Coccinelle
+
+## Usage
+```bash
+./spatch.sh --version
+./spatch.sh script.cocci file.c
+```
+
+## Installation
+```bash
+tar -xzf coccinelle-portable.tar.gz
+cd portable-coccinelle
+./spatch.sh --version
+```
+EOF
+        echo "✅ README created"
         
-        ## Usage
-        ```bash
-        ./spatch.sh --version
-        ./spatch.sh script.cocci file.c
-        ```
-        
-        ## Installation
-        ```bash
-        tar -xzf coccinelle-portable.tar.gz
-        cd portable-coccinelle
-        ./spatch.sh --version
-        ```
-        EOF
+        # 檢查目錄結構
+        echo "📁 Final directory structure:"
+        find portable-coccinelle -type f | head -10
         
         # 測試
+        echo "🧪 Testing portable spatch..."
         ./portable-coccinelle/spatch.sh --version
         
         # 打包
