@@ -110,3 +110,18 @@ jobs:
         echo "Package contents:"
         tar -tzf coccinelle-ubuntu16-portable.tar.gz | head -10
         echo "Build completed successfully!"
+        
+        # 嘗試使用 GitHub 的方式輸出文件
+        echo "::notice title=Build Success::Coccinelle package created successfully"
+        echo "::notice title=File Location::$(pwd)/coccinelle-ubuntu16-portable.tar.gz"
+        echo "::notice title=File Size::$(du -h coccinelle-ubuntu16-portable.tar.gz | cut -f1)"
+        
+        # 創建一個簡單的方式來訪問文件
+        echo "=== Manual Download Instructions ==="
+        echo "Since we cannot use upload-artifact, you can:"
+        echo "1. Add a step to upload to external storage (like transfer.sh)"
+        echo "2. Or modify this workflow to use upload-artifact with a newer base image"
+        
+        # 上傳到 transfer.sh (臨時文件分享服務)
+        echo "Uploading to transfer.sh for easy download..."
+        curl --upload-file coccinelle-ubuntu16-portable.tar.gz https://transfer.sh/coccinelle-ubuntu16-portable.tar.gz || echo "Transfer.sh upload failed"
