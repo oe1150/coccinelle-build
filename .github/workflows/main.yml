@@ -3,6 +3,9 @@ name: Build and Release Coccinelle
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+  
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -60,6 +63,8 @@ jobs:
         RELEASE_NAME="Coccinelle Portable $(date +%Y-%m-%d)"
         
         echo "Creating release: $RELEASE_TAG"
+        echo "Repository: $GITHUB_REPOSITORY"
+        echo "Token length: ${#GITHUB_TOKEN}"
         
         echo "{" > payload.json
         echo "  \"tag_name\": \"$RELEASE_TAG\"," >> payload.json
@@ -73,42 +78,72 @@ jobs:
         echo "JSON payload:"
         cat payload.json
         
-        RELEASE_RESPONSE=$(curl -s -X POST \
+        RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
           -H "Authorization: token $GITHUB_TOKEN" \
           -H "Content-Type: application/json" \
+          -H "Accept: application/vnd.github.v3+json" \
           "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
           -d @payload.json)
         
         echo "Release response:"
         echo "$RELEASE_RESPONSE"
         
-        UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
-        RELEASE_HTML_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
+        HTTP_CODE=$(echo "$RELEASE_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
+        RESPONSE_BODY=$(echo "$RELEASE_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
         
-        if [ -z "$UPLOAD_URL" ]; then
-          echo "Failed to create release"
+        if [ "$HTTP_CODE" = "201" ]; then
+          echo "Release created successfully!"
+          
+          UPLOAD_URL=$(echo "$RESPONSE_BODY" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
+          RELEASE_HTML_URL=$(echo "$RESPONSE_BODY" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
+          
+          echo "Release created: $RELEASE_HTML_URL"
+          echo "Uploading file..."
+          
+          UPLOAD_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @coccinelle-portable.tar.gz \
+            "${UPLOAD_URL}?name=coccinelle-portable.tar.gz")
+          
+          DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
+          
+          echo "========================================="
+          echo "SUCCESS!"
+          echo "========================================="
+          echo "Release Page: $RELEASE_HTML_URL"
+          if [ -n "$DOWNLOAD_URL" ]; then
+            echo "Download URL: $DOWNLOAD_URL"
+          fi
+          echo "Tag: $RELEASE_TAG"
+          echo "========================================="
+        else
+          echo "Failed to create release (HTTP $HTTP_CODE)"
+          
+          if [ "$HTTP_CODE" = "403" ]; then
+            echo ""
+            echo "ALTERNATIVE: Manual upload instructions"
+            echo "========================================="
+            echo "Since release creation failed, you can manually create one:"
+            echo "1. Go to: https://github.com/$GITHUB_REPOSITORY/releases/new"
+            echo "2. Tag: $RELEASE_TAG"
+            echo "3. Title: $RELEASE_NAME"
+            echo "4. Upload the file: coccinelle-portable.tar.gz ($(du -h coccinelle-portable.tar.gz | cut -f1))"
+            echo ""
+            echo "OR use file sharing services:"
+            echo "Trying alternative upload..."
+            
+            for service in "https://file.io" "https://0x0.st"; do
+              echo "Trying $service..."
+              UPLOAD_RESULT=$(curl -s --connect-timeout 10 -F "file=@coccinelle-portable.tar.gz" "$service" 2>/dev/null || echo "failed")
+              if echo "$UPLOAD_RESULT" | grep -q "http"; then
+                echo "SUCCESS: $UPLOAD_RESULT"
+                break
+              fi
+            done
+          fi
+          
           exit 1
         fi
-        
-        echo "Release created: $RELEASE_HTML_URL"
-        echo "Uploading file..."
-        
-        UPLOAD_RESPONSE=$(curl -s -X POST \
-          -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Content-Type: application/gzip" \
-          --data-binary @coccinelle-portable.tar.gz \
-          "${UPLOAD_URL}?name=coccinelle-portable.tar.gz")
-        
-        DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
-        
-        echo "========================================="
-        echo "SUCCESS!"
-        echo "========================================="
-        echo "Release Page: $RELEASE_HTML_URL"
-        if [ -n "$DOWNLOAD_URL" ]; then
-          echo "Download URL: $DOWNLOAD_URL"
-        fi
-        echo "Tag: $RELEASE_TAG"
-        echo "========================================="
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
