@@ -1,4 +1,4 @@
-name: Build Coccinelle for Ubuntu 16.04 (No Node.js)
+name: Build Coccinelle Simple
 
 on:
   workflow_dispatch:
@@ -6,127 +6,65 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    container: ubuntu:16.04
+    container: ubuntu:18.04
     
     steps:
-    - name: Build Coccinelle from deb packages
+    - name: Install and package Coccinelle
       run: |
-        # 更新包管理器
-        apt-get update
-        apt-get install -y wget ca-certificates
+        # 設置非交互式模式
+        export DEBIAN_FRONTEND=noninteractive
         
-        # 使用 old-releases.ubuntu.com 獲取 Ubuntu 16.04 的包
-        echo "Downloading packages from old-releases archive..."
+        # 更新並安裝 Coccinelle
+        apt-get update -qq
+        apt-get install -y -qq coccinelle curl tar
         
-        # 下載 Coccinelle 相關包
-        wget http://old-releases.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.4-2_amd64.deb || \
-        wget http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-1_amd64.deb || \
-        echo "Trying alternative method..."
+        # 檢查安裝
+        which spatch
+        spatch --version
         
-        # 如果上面失敗，直接安裝系統包
-        if [ ! -f coccinelle_*.deb ]; then
-            echo "Direct package installation method..."
-            apt-get install -y coccinelle || echo "System package not available"
-            
-            # 創建可攜式包從系統安裝
-            mkdir -p portable-coccinelle/bin
-            mkdir -p portable-coccinelle/lib
-            mkdir -p portable-coccinelle/share
-            
-            # 複製系統中的 spatch
-            cp /usr/bin/spatch portable-coccinelle/bin/ 2>/dev/null || echo "spatch not found in /usr/bin"
-            
-            # 尋找並複製 OCaml 庫
-            cp -r /usr/lib/*/ocaml portable-coccinelle/lib/ 2>/dev/null || echo "OCaml libs not found"
-            cp -r /usr/share/coccinelle portable-coccinelle/share/ 2>/dev/null || echo "Coccinelle share not found"
-        else
-            echo "Using downloaded deb packages..."
-            # 下載 OCaml 包
-            wget http://old-releases.ubuntu.com/ubuntu/pool/main/o/ocaml/ocaml-base_4.02.3-9ubuntu1_amd64.deb || echo "OCaml base not found"
-            wget http://old-releases.ubuntu.com/ubuntu/pool/main/o/ocaml/ocaml-interp_4.02.3-9ubuntu1_amd64.deb || echo "OCaml interp not found"
-            
-            # 解壓所有 deb 包
-            mkdir -p extracted
-            for deb in *.deb; do
-                if [ -f "$deb" ]; then
-                    echo "Extracting $deb..."
-                    dpkg-deb -x "$deb" extracted/
-                fi
-            done
-            
-            # 創建可攜式包
-            mkdir -p portable-coccinelle
-            cp -r extracted/usr/* portable-coccinelle/ 2>/dev/null || echo "No extracted files found"
-        fi
+        # 創建可攜式包
+        mkdir -p portable-coccinelle/bin
+        mkdir -p portable-coccinelle/lib
+        mkdir -p portable-coccinelle/share
+        
+        # 複製 spatch 和相關文件
+        cp /usr/bin/spatch portable-coccinelle/bin/
+        
+        # 複製庫文件
+        cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/ 2>/dev/null || true
+        cp -r /usr/share/coccinelle portable-coccinelle/share/ 2>/dev/null || true
         
         # 創建啟動腳本
         cat > portable-coccinelle/spatch.sh << 'EOF'
         #!/bin/bash
         SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$LD_LIBRARY_PATH"
         export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-        if [ -x "$SCRIPT_DIR/bin/spatch" ]; then
-            "$SCRIPT_DIR/bin/spatch" "$@"
-        else
-            echo "spatch binary not found!"
-            exit 1
-        fi
+        "$SCRIPT_DIR/bin/spatch" "$@"
         EOF
         chmod +x portable-coccinelle/spatch.sh
         
-        # 檢查是否有 spatch 可執行檔
-        echo "Checking for spatch binary..."
-        find portable-coccinelle -name "spatch" -type f
-        ls -la portable-coccinelle/bin/ 2>/dev/null || echo "No bin directory"
-        
-        # 如果沒找到，嘗試從源碼編譯
-        if [ ! -f portable-coccinelle/bin/spatch ]; then
-            echo "Attempting to build from source..."
-            apt-get install -y build-essential ocaml ocaml-native-compilers camlp4-extra libpcre3-dev pkg-config
-            
-            wget https://coccinelle.gitlabpages.inria.fr/website/distrib/coccinelle-1.0.4.tar.gz
-            tar -xzf coccinelle-1.0.4.tar.gz
-            cd coccinelle-1.0.4
-            ./configure --prefix=/opt/coccinelle --disable-python
-            make
-            make install
-            cd ..
-            
-            # 複製編譯結果
-            cp -r /opt/coccinelle/* portable-coccinelle/
-        fi
-        
-        # 測試執行
-        echo "Testing spatch..."
-        ./portable-coccinelle/spatch.sh --version || echo "Version check failed, but continuing..."
+        # 測試
+        echo "Testing portable spatch..."
+        ./portable-coccinelle/spatch.sh --version
         
         # 打包
-        tar -czf coccinelle-ubuntu16-portable.tar.gz portable-coccinelle/
+        tar -czf coccinelle-portable.tar.gz portable-coccinelle/
         
-        # 顯示信息
-        echo "=== Build Summary ==="
-        echo "Artifact size:"
-        ls -lh coccinelle-ubuntu16-portable.tar.gz
-        echo "Package contents:"
-        tar -tzf coccinelle-ubuntu16-portable.tar.gz | head -10
-        echo "Build completed successfully!"
+        # 上傳到 transfer.sh
+        echo "Uploading to transfer.sh..."
+        URL=$(curl --upload-file coccinelle-portable.tar.gz https://transfer.sh/coccinelle-portable.tar.gz)
+        echo "========================================="
+        echo "DOWNLOAD URL: $URL"
+        echo "========================================="
         
-        # 嘗試使用 GitHub 的方式輸出文件
-        echo "::notice title=Build Success::Coccinelle package created successfully"
-        echo "::notice title=File Location::$(pwd)/coccinelle-ubuntu16-portable.tar.gz"
-        echo "::notice title=File Size::$(du -h coccinelle-ubuntu16-portable.tar.gz | cut -f1)"
-        
-        # 創建一個簡單的方式來訪問文件
-        echo "=== Manual Download Instructions ==="
-        echo "Since we cannot use upload-artifact, you can:"
-        echo "1. Add a step to upload to external storage (like transfer.sh)"
-        echo "2. Or modify this workflow to use upload-artifact with a newer base image"
-        
-        # 安裝 curl 用於上傳
-        apt-get install -y curl
-        
-        # 上傳到 transfer.sh (臨時文件分享服務)
-        echo "Uploading to transfer.sh for easy download..."
-        DOWNLOAD_URL=$(curl --upload-file coccinelle-ubuntu16-portable.tar.gz https://transfer.sh/coccinelle-ubuntu16-portable.tar.gz)
-        echo "Download URL: $DOWNLOAD_URL"
-        echo "::notice title=Download URL::$DOWNLOAD_URL"
+        # 顯示文件信息
+        echo "Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
+        echo "Package location: $(pwd)/coccinelle-portable.tar.gz"
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coccinelle-portable
+        path: coccinelle-portable.tar.gz
+      continue-on-error: true
