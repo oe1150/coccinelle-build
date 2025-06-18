@@ -125,3 +125,9 @@ jobs:
         # 上傳到 transfer.sh (臨時文件分享服務)
         echo "Uploading to transfer.sh for easy download..."
         curl --upload-file coccinelle-ubuntu16-portable.tar.gz https://transfer.sh/coccinelle-ubuntu16-portable.tar.gz || echo "Transfer.sh upload failed"
+    - name: Try upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coccinelle-ubuntu16-portable
+        path: coccinelle-ubuntu16-portable.tar.gz
+      continue-on-error: true
