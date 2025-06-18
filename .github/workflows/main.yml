@@ -1,0 +1,81 @@
+name: Build Coccinelle for Ubuntu 16.04
+
+# 觸發條件：當推送代碼或手動觸發時
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # 允許手動觸發
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    container: ubuntu:16.04
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Install dependencies
+      run: |
+        apt-get update
+        apt-get install -y \
+          build-essential \
+          ocaml \
+          ocaml-native-compilers \
+          camlp4-extra \
+          wget \
+          libpcre3-dev \
+          pkg-config
+    
+    - name: Download Coccinelle source
+      run: |
+        wget https://coccinelle.gitlabpages.inria.fr/website/distrib/coccinelle-1.0.8.tar.gz
+        tar -xzf coccinelle-1.0.8.tar.gz
+    
+    - name: Configure and build Coccinelle
+      run: |
+        cd coccinelle-1.0.8
+        ./configure --prefix=/opt/coccinelle
+        make
+        make install
+    
+    - name: Create portable package
+      run: |
+        # 創建可攜式包
+        mkdir -p portable-coccinelle/bin
+        mkdir -p portable-coccinelle/lib
+        mkdir -p portable-coccinelle/share
+        
+        # 複製執行檔
+        cp -r /opt/coccinelle/* portable-coccinelle/
+        
+        # 複製必要的庫文件
+        cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/ || true
+        
+        # 創建啟動腳本
+        cat > portable-coccinelle/spatch.sh << 'EOF'
+        #!/bin/bash
+        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$LD_LIBRARY_PATH"
+        export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
+        "$SCRIPT_DIR/bin/spatch" "$@"
+        EOF
+        chmod +x portable-coccinelle/spatch.sh
+        
+        # 打包
+        tar -czf coccinelle-ubuntu16-portable.tar.gz portable-coccinelle/
+    
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: coccinelle-ubuntu16-portable
+        path: coccinelle-ubuntu16-portable.tar.gz
+        retention-days: 30
+    
+    - name: Display build info
+      run: |
+        echo "Build completed successfully!"
+        echo "Artifact size:"
+        ls -lh coccinelle-ubuntu16-portable.tar.gz
+        echo "Contents:"
+        tar -tzf coccinelle-ubuntu16-portable.tar.gz | head -20
