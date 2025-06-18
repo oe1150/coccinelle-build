@@ -1,4 +1,4 @@
-name: Build Coccinelle Portable
+name: Build and Release Coccinelle
 
 on:
   workflow_dispatch:
@@ -9,155 +9,152 @@ jobs:
     container: ubuntu:18.04
     
     steps:
-    - name: Install and package Coccinelle
+    - name: Build Coccinelle package
       run: |
         # 設置非交互式模式
         export DEBIAN_FRONTEND=noninteractive
         
-        # 更新並安裝 Coccinelle
+        # 安裝必要軟件
         apt-get update -qq
-        apt-get install -y -qq coccinelle tar
+        apt-get install -y -qq coccinelle tar curl ca-certificates
         
-        # 檢查安裝
-        echo "Checking Coccinelle installation..."
-        which spatch
-        spatch --version
+        # 檢查版本
+        echo "Building Coccinelle $(spatch --version | head -1)"
         
-        # 創建可攜式包目錄結構
-        mkdir -p portable-coccinelle/bin
-        mkdir -p portable-coccinelle/lib
-        mkdir -p portable-coccinelle/share
+        # 創建可攜式包
+        mkdir -p portable-coccinelle/{bin,lib,share}
         
-        # 複製 spatch 執行檔
+        # 複製文件
         cp /usr/bin/spatch portable-coccinelle/bin/
-        
-        # 複製 OCaml 庫文件
-        if [ -d /usr/lib/x86_64-linux-gnu/ocaml ]; then
-            cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/
-        fi
-        
-        # 複製 Coccinelle 配置和腳本
-        if [ -d /usr/share/coccinelle ]; then
-            cp -r /usr/share/coccinelle portable-coccinelle/share/
-        fi
-        
-        # 複製其他可能需要的庫
-        if [ -d /usr/lib/ocaml ]; then
-            cp -r /usr/lib/ocaml portable-coccinelle/lib/ 2>/dev/null || true
-        fi
+        cp -r /usr/lib/x86_64-linux-gnu/ocaml portable-coccinelle/lib/ 2>/dev/null || true
+        cp -r /usr/share/coccinelle portable-coccinelle/share/ 2>/dev/null || true
         
         # 創建啟動腳本
         cat > portable-coccinelle/spatch.sh << 'EOF'
         #!/bin/bash
-        # Portable Coccinelle launcher script
         SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        
-        # 設置環境變數
         export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
         export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
         export COCCINELLE_HOME="$SCRIPT_DIR/share/coccinelle"
-        
-        # 執行 spatch
         "$SCRIPT_DIR/bin/spatch" "$@"
         EOF
-        
-        # 設置執行權限
         chmod +x portable-coccinelle/spatch.sh
-        chmod +x portable-coccinelle/bin/spatch
         
-        # 創建 README 文件
+        # 創建 README
         cat > portable-coccinelle/README.md << 'EOF'
-        # Portable Coccinelle Package
-        
-        This is a portable version of Coccinelle (spatch) built for Ubuntu systems.
+        # Portable Coccinelle
         
         ## Usage
-        
-        ### Method 1: Use the launcher script
         ```bash
         ./spatch.sh --version
-        ./spatch.sh [your-options] [files]
-        ```
-        
-        ### Method 2: Add to PATH
-        ```bash
-        export PATH=$PWD:$PATH
-        spatch.sh --version
-        ```
-        
-        ### Method 3: Create alias
-        ```bash
-        alias spatch=$PWD/spatch.sh
-        spatch --version
+        ./spatch.sh script.cocci file.c
         ```
         
         ## Installation
-        
-        1. Extract the package:
-           ```bash
-           tar -xzf coccinelle-portable.tar.gz
-           cd portable-coccinelle
-           ```
-        
-        2. Test the installation:
-           ```bash
-           ./spatch.sh --version
-           ```
-        
-        3. (Optional) Add to your shell profile:
-           ```bash
-           echo "export PATH=\$PATH:$(pwd)" >> ~/.bashrc
-           echo "alias spatch=$(pwd)/spatch.sh" >> ~/.bashrc
-           source ~/.bashrc
-           ```
-        
-        ## Package Info
-        
-        - Coccinelle Version: Built from Ubuntu 18.04 repository
-        - Build Date: $(date)
-        - Includes: Python support, PCRE support
-        - Compatibility: Ubuntu 16.04+ and compatible Linux distributions
+        ```bash
+        tar -xzf coccinelle-portable.tar.gz
+        cd portable-coccinelle
+        ./spatch.sh --version
+        ```
         EOF
         
-        # 測試可攜式版本
-        echo "Testing portable spatch..."
+        # 測試
         ./portable-coccinelle/spatch.sh --version
-        
-        # 顯示包內容
-        echo "Package contents:"
-        find portable-coccinelle -type f | head -20
         
         # 打包
         tar -czf coccinelle-portable.tar.gz portable-coccinelle/
         
-        # 顯示最終信息
-        echo "========================================="
-        echo "✅ Coccinelle portable package created!"
-        echo "📦 Package: coccinelle-portable.tar.gz"
-        echo "📏 Size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
-        echo "📍 Location: $(pwd)/coccinelle-portable.tar.gz"
-        echo "========================================="
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-portable
-        path: coccinelle-portable.tar.gz
-        retention-days: 30
-    
-    - name: Display download instructions
+        echo "Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
+        
+        # 創建 release notes
+        cat > release-notes.md << EOF
+        # Coccinelle Portable Package
+        
+        ## Version Information
+        - Coccinelle Version: $(spatch --version | head -1)
+        - Build Date: $(date)
+        - Build From: Ubuntu 18.04
+        - Supports: Python, PCRE
+        
+        ## Download and Usage
+        1. Download \`coccinelle-portable.tar.gz\`
+        2. Extract: \`tar -xzf coccinelle-portable.tar.gz\`
+        3. Use: \`cd portable-coccinelle && ./spatch.sh --version\`
+        
+        ## Compatibility
+        - Ubuntu 16.04+
+        - Debian 9+
+        - Other compatible Linux distributions
+        
+        Package size: $(du -h coccinelle-portable.tar.gz | cut -f1)
+        EOF
+
+    - name: Create Release
       run: |
-        echo "🎉 Build completed successfully!"
-        echo ""
-        echo "📥 To download your package:"
-        echo "1. Go to the Actions tab in your GitHub repository"
-        echo "2. Click on this workflow run"
-        echo "3. Scroll down to the 'Artifacts' section"
-        echo "4. Click 'coccinelle-portable' to download"
-        echo ""
-        echo "📋 Package contents:"
-        echo "- spatch.sh (launcher script)"
-        echo "- bin/spatch (main executable)"
-        echo "- lib/ (OCaml libraries)"
-        echo "- share/ (Coccinelle configuration)"
-        echo "- README.md (usage instructions)"
+        # 直接使用 GitHub API 創建 release，避免安裝 GitHub CLI
+        RELEASE_TAG="coccinelle-$(date +%Y%m%d-%H%M%S)"
+        RELEASE_NAME="Coccinelle Portable $(date +%Y-%m-%d)"
+        
+        echo "Creating release with tag: $RELEASE_TAG"
+        
+        # 創建 release
+        RELEASE_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
+          -d '{
+            "tag_name": "'"$RELEASE_TAG"'",
+            "target_commitish": "main",
+            "name": "'"$RELEASE_NAME"'",
+            "body": "# Coccinelle Portable Package\n\n## Version Information\n- Coccinelle Version: '"$(spatch --version | head -1)"'\n- Build Date: '"$(date)"'\n- Build From: Ubuntu 18.04\n- Supports: Python, PCRE\n\n## Download and Usage\n1. Download `coccinelle-portable.tar.gz`\n2. Extract: `tar -xzf coccinelle-portable.tar.gz`\n3. Use: `cd portable-coccinelle && ./spatch.sh --version`\n\n## Compatibility\n- Ubuntu 16.04+\n- Debian 9+\n- Other compatible Linux distributions\n\nPackage size: '"$(du -h coccinelle-portable.tar.gz | cut -f1)"'",
+            "draft": false,
+            "prerelease": false
+          }')
+        
+        # 獲取 upload URL 和 release ID
+        UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
+        RELEASE_ID=$(echo "$RELEASE_RESPONSE" | grep -o '"id": [0-9]*' | head -1 | cut -d' ' -f2)
+        RELEASE_HTML_URL=$(echo "$RELEASE_RESPONSE" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
+        
+        if [ -z "$UPLOAD_URL" ]; then
+          echo "❌ Failed to create release"
+          echo "Response: $RELEASE_RESPONSE"
+          exit 1
+        fi
+        
+        echo "✅ Release created successfully!"
+        echo "📦 Release URL: $RELEASE_HTML_URL"
+        
+        # 上傳文件到 release
+        echo "📤 Uploading file to release..."
+        UPLOAD_RESPONSE=$(curl -s -X POST \
+          -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Content-Type: application/gzip" \
+          --data-binary @coccinelle-portable.tar.gz \
+          "${UPLOAD_URL}?name=coccinelle-portable.tar.gz&label=Coccinelle Portable Package")
+        
+        DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
+        
+        if [ -n "$DOWNLOAD_URL" ]; then
+          echo "✅ File uploaded successfully!"
+          echo ""
+          echo "========================================="
+          echo "🎉 RELEASE PUBLISHED!"
+          echo "========================================="
+          echo "📥 Download URL: $DOWNLOAD_URL"
+          echo "📦 Release Page: $RELEASE_HTML_URL"
+          echo "🏷️  Tag: $RELEASE_TAG"
+          echo "📏 File Size: $(du -h coccinelle-portable.tar.gz | cut -f1)"
+          echo "========================================="
+          echo ""
+          echo "📝 To use the package:"
+          echo "1. Download the file from the URL above"
+          echo "2. Extract: tar -xzf coccinelle-portable.tar.gz"
+          echo "3. Test: cd portable-coccinelle && ./spatch.sh --version"
+        else
+          echo "❌ Failed to upload file"
+          echo "Upload response: $UPLOAD_RESPONSE"
+          echo "But release was created at: $RELEASE_HTML_URL"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
