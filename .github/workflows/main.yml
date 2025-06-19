@@ -8,7 +8,7 @@ permissions:
   
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Build Coccinelle 1.0.7+ from source
@@ -64,16 +64,17 @@ jobs:
                 autoreconf -fiv
             fi
             
-            # 配置 - 使用兼容性設置
-            echo "Configuring for compatibility..."
+            # 配置 - 使用兼容性設置和舊 GLIBC 目標
+            echo "Configuring for GLIBC 2.23 compatibility..."
             if ./configure \
                 --prefix=/tmp/coccinelle-install \
                 --disable-opt \
                 --disable-pcre \
                 --enable-python \
                 --with-python=python3 \
-                CFLAGS="-O2 -static-libgcc" \
-                LDFLAGS="-static-libgcc"; then
+                CC="gcc -m64" \
+                CFLAGS="-O2 -static-libgcc -fno-stack-protector" \
+                LDFLAGS="-static-libgcc -Wl,--no-as-needed"; then
                 
                 echo "✅ Configure successful for $VERSION"
                 
@@ -185,31 +186,31 @@ jobs:
         
         # 創建 README
         FINAL_VERSION=$(/tmp/coccinelle-install/bin/spatch --version | head -1)
-        cat > portable-coccinelle/README.md << EOF
-        # Portable Coccinelle $SUCCESS_VERSION
-        
-        ## Version Information
-        $FINAL_VERSION
-        Built from source on Ubuntu 20.04
-        
-        ## Usage
-        \`\`\`bash
-        ./spatch.sh --version
-        ./spatch --version
-        \`\`\`
-        
-        ## Installation
-        \`\`\`bash
-        tar -xzf coccinelle-${SUCCESS_VERSION}-portable.tar.gz
-        cd portable-coccinelle
-        ./spatch --version
-        \`\`\`
-        
-        ## Compatibility
-        - Ubuntu 16.04+ (GLIBC 2.23+)
-        - Python 3 support
-        - OCaml runtime included
-        EOF
+        cat > portable-coccinelle/README.md << 'README_EOF'
+# Portable Coccinelle for Ubuntu 16.04+
+
+## Version Information
+Built from source on Ubuntu 22.04 with GLIBC 2.23+ compatibility
+
+## Usage
+```bash
+./spatch.sh --version
+./spatch --version
+```
+
+## Installation
+```bash
+tar -xzf coccinelle-portable.tar.gz
+cd portable-coccinelle
+./spatch --version
+```
+
+## Compatibility
+- Target: Ubuntu 16.04+ (GLIBC 2.23+)
+- Python 3 support
+- OCaml runtime included
+- Static-linked where possible
+README_EOF
         
         # 測試可攜式版本
         echo "Testing portable version..."
@@ -239,16 +240,21 @@ jobs:
         RELEASE_NAME="Coccinelle ${SUCCESS_VERSION} (Source Build)"
         
         # 創建 JSON payload
-        cat > payload.json << EOF
-        {
-          "tag_name": "$RELEASE_TAG",
-          "target_commitish": "main",
-          "name": "$RELEASE_NAME", 
-          "body": "Coccinelle $SUCCESS_VERSION built from source for maximum compatibility",
-          "draft": false,
-          "prerelease": false
-        }
-        EOF
+        cat > payload.json << 'JSON_EOF'
+{
+  "tag_name": "REPLACE_TAG",
+  "target_commitish": "main",
+  "name": "REPLACE_NAME", 
+  "body": "REPLACE_BODY",
+  "draft": false,
+  "prerelease": false
+}
+JSON_EOF
+        
+        # 替換佔位符
+        sed -i "s/REPLACE_TAG/$RELEASE_TAG/" payload.json
+        sed -i "s/REPLACE_NAME/$RELEASE_NAME/" payload.json
+        sed -i "s/REPLACE_BODY/Coccinelle $SUCCESS_VERSION built from source with GLIBC 2.23+ compatibility/" payload.json
         
         # 創建 release
         RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
