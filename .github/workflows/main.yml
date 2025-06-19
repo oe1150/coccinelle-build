@@ -39,13 +39,15 @@ jobs:
         apt-get install -y -qq ocaml ocaml-findlib || echo "Updated OCaml not available"
         
         echo "Target system GLIBC: 2.23 (Ubuntu 16.04 compatible)"
-        echo "Building Coccinelle with static linking where possible..."
+        echo "Building Coccinelle 1.0.7+ with compatibility focus..."
         
         cd /tmp
         
-        # 首先嘗試編譯 1.0.8，如果失敗則降級
-        for VERSION in "1.0.8" "1.0.7" "1.0.6"; do
+        # 專門針對 1.0.7 和 1.0.8，跳過 1.0.6
+        for VERSION in "1.0.8" "1.0.7"; do
+            echo "========================================="
             echo "Attempting Coccinelle $VERSION..."
+            echo "========================================="
             
             rm -rf coccinelle-*
             wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
@@ -54,69 +56,181 @@ jobs:
             
             # 檢查 OCaml 版本
             echo "OCaml version: $(ocaml -version)"
+            echo "Available OCaml packages:"
+            ocamlfind list | head -10
+            
+            # 檢查文件結構
+            echo "Source structure:"
+            ls -la | head -10
             
             # 生成配置文件
-            ./autogen || (echo "Autogen failed, trying manual..." && autoreconf -fiv)
-            
-            # 配置 - 針對舊系統優化，嘗試靜態鏈接
-            echo "Configuring for compatibility..."
-            ./configure \
-                --prefix=/usr/local \
-                --disable-opt \
-                --disable-pcre \
-                --disable-python \
-                --enable-release \
-                LDFLAGS="-static-libgcc" \
-                CFLAGS="-O2 -g" \
-                || (echo "Configure with static failed, trying standard..." && \
-                    ./configure --prefix=/usr/local --disable-opt --disable-pcre --disable-python)
-            
-            # 編譯
-            echo "Building..."
-            make clean || true
-            
-            # 嘗試靜態編譯
-            if make LDFLAGS="-static" -j1 2>/dev/null; then
-                echo "✅ Static build successful for $VERSION!"
-                file spatch
-                ldd spatch || echo "Static binary (no dynamic dependencies)"
-                ./spatch --version
-                make install
-                SPATCH_PATH="/usr/local/bin/spatch"
-                BUILT_VERSION="$VERSION"
-                break
-            elif make -j1; then
-                echo "✅ Dynamic build successful for $VERSION!"
-                file spatch
-                ldd spatch | head -5
-                ./spatch --version
-                make install
-                SPATCH_PATH="/usr/local/bin/spatch"
-                BUILT_VERSION="$VERSION"
-                break
+            echo "Running autogen..."
+            if [ -f autogen ]; then
+                ./autogen
+            elif [ -f autogen.sh ]; then
+                ./autogen.sh
             else
-                echo "❌ Build failed for $VERSION, trying next..."
+                echo "Running autoreconf..."
+                autoreconf -fiv
+            fi
+            
+            # 多種配置嘗試
+            CONFIG_SUCCESS=false
+            
+            # 嘗試1：最小配置
+            echo "Trying minimal configuration..."
+            if ./configure --prefix=/usr/local --disable-opt --disable-pcre --disable-python --enable-release; then
+                CONFIG_SUCCESS=true
+                echo "✅ Minimal config successful"
+            fi
+            
+            # 嘗試2：標準配置
+            if [ "$CONFIG_SUCCESS" = false ]; then
+                echo "Trying standard configuration..."
+                if ./configure --prefix=/usr/local --disable-opt; then
+                    CONFIG_SUCCESS=true
+                    echo "✅ Standard config successful"
+                fi
+            fi
+            
+            # 如果配置失敗，跳到下個版本
+            if [ "$CONFIG_SUCCESS" = false ]; then
+                echo "❌ Configuration failed for $VERSION"
                 cd /tmp
                 continue
             fi
+            
+            # 清理之前的編譯
+            make clean 2>/dev/null || true
+            
+            # 編譯嘗試
+            echo "Building $VERSION..."
+            BUILD_SUCCESS=false
+            
+            # 嘗試1：標準編譯
+            echo "Trying standard build..."
+            if make -j1; then
+                if [ -f spatch ] || [ -f spatch.opt ]; then
+                    BUILD_SUCCESS=true
+                    echo "✅ Standard build successful"
+                    # 檢查生成的文件
+                    ls -la spatch* || true
+                    file spatch* || true
+                fi
+            fi
+            
+            # 嘗試2：只編譯字節碼版本
+            if [ "$BUILD_SUCCESS" = false ]; then
+                echo "Trying bytecode build..."
+                make clean || true
+                if make spatch.byte -j1; then
+                    if [ -f spatch.byte ]; then
+                        mv spatch.byte spatch
+                        BUILD_SUCCESS=true
+                        echo "✅ Bytecode build successful"
+                    fi
+                fi
+            fi
+            
+            # 檢查編譯結果
+            if [ "$BUILD_SUCCESS" = true ]; then
+                echo "✅ Build successful for $VERSION!"
+                
+                # 檢查可執行文件
+                if [ -f spatch ]; then
+                    echo "spatch file found:"
+                    ls -la spatch
+                    file spatch
+                    
+                    # 測試執行
+                    echo "Testing execution..."
+                    if ./spatch --version; then
+                        echo "✅ Execution test passed"
+                        
+                        # 安裝
+                        make install
+                        SPATCH_PATH="/usr/local/bin/spatch"
+                        BUILT_VERSION="$VERSION"
+                        
+                        # 最終驗證
+                        echo "Final verification:"
+                        ls -la /usr/local/bin/spatch
+                        /usr/local/bin/spatch --version
+                        break
+                    else
+                        echo "❌ Execution test failed"
+                    fi
+                else
+                    echo "❌ No spatch executable found after build"
+                    ls -la . | grep spatch || echo "No spatch files"
+                fi
+            else
+                echo "❌ Build failed for $VERSION"
+            fi
+            
+            cd /tmp
         done
         
-        # 如果所有編譯都失敗，使用系統包
+        # 如果 1.0.7+ 都失敗，嘗試從 Ubuntu 18.04 的 deb 包獲取較新版本
         if [ ! -x "$SPATCH_PATH" ]; then
-            echo "All source builds failed, using system package..."
+            echo "========================================="
+            echo "Source builds failed, trying deb packages..."
+            echo "========================================="
+            
+            cd /tmp
+            
+            # 嘗試從 Ubuntu 18.04/20.04 獲取較新的 deb 包
+            for deb_url in \
+                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-2_amd64.deb" \
+                "http://old-releases.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-1_amd64.deb"; do
+                
+                echo "Trying $deb_url..."
+                if wget "$deb_url"; then
+                    deb_file=$(basename "$deb_url")
+                    dpkg -x "$deb_file" /tmp/coccinelle_extract
+                    
+                    if [ -f /tmp/coccinelle_extract/usr/bin/spatch ]; then
+                        echo "✅ Found spatch in deb package"
+                        cp /tmp/coccinelle_extract/usr/bin/spatch /usr/local/bin/
+                        cp -r /tmp/coccinelle_extract/usr/lib/coccinelle /usr/local/lib/ 2>/dev/null || true
+                        cp -r /tmp/coccinelle_extract/usr/share/coccinelle /usr/local/share/ 2>/dev/null || true
+                        
+                        # 測試
+                        if /usr/local/bin/spatch --version; then
+                            SPATCH_PATH="/usr/local/bin/spatch"
+                            BUILT_VERSION="deb-package"
+                            break
+                        fi
+                    fi
+                fi
+            done
+        fi
+        
+        # 最後手段：系統包
+        if [ ! -x "$SPATCH_PATH" ]; then
+            echo "All methods failed, using system package..."
             apt-get install -y -qq coccinelle
             SPATCH_PATH="/usr/bin/spatch"
             BUILT_VERSION="system"
         fi
         
         # 檢查最終結果
-        echo "Final spatch version:"
-        $SPATCH_PATH --version || echo "Version check failed"
-        echo "Built version: $BUILT_VERSION"
-        
-        # 檢查二進制依賴
-        echo "Binary dependencies:"
-        ldd $SPATCH_PATH | head -10 || echo "Static binary"
+        echo "========================================="
+        echo "FINAL RESULT:"
+        echo "========================================="
+        echo "spatch path: $SPATCH_PATH"
+        if [ -x "$SPATCH_PATH" ]; then
+            echo "✅ spatch is executable"
+            $SPATCH_PATH --version
+            echo "Built version: $BUILT_VERSION"
+            
+            # 檢查二進制依賴
+            echo "Binary dependencies:"
+            ldd $SPATCH_PATH | head -10 || echo "Static binary or dependency check failed"
+        else
+            echo "❌ No working spatch found"
+            exit 1
+        fi
         
         echo "Creating portable package..."
         rm -rf portable-coccinelle
