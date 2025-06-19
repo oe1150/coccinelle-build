@@ -1,4 +1,4 @@
-name: Build Static Coccinelle (musl + GLIBC 2.23 compatible)
+name: Build Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
 
 on:
   workflow_dispatch:
@@ -8,68 +8,54 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Install Docker and run build
+      - name: Build Spatch in Docker (Debian Jessie)
         run: |
-          docker run --rm -v $(pwd):/output ubuntu:16.04 bash -c "
-            set -ex
+          echo "=== Building static spatch in Debian Jessie ==="
+          mkdir -p output
 
-            echo 'deb http://archive.ubuntu.com/ubuntu xenial main universe' > /etc/apt/sources.list
-            apt-get update
-            apt-get install -y \
-              build-essential \
-              musl-tools \
-              ocaml \
-              ocaml-native-compilers \
-              ocaml-findlib \
-              libnum-ocaml-dev \
-              libpcre3-dev \
-              libpcre-ocaml-dev \
-              pkg-config \
-              autoconf \
-              automake \
-              libtool \
-              m4 \
-              curl \
-              wget \
-              ca-certificates
+          cat > Dockerfile <<'EOF'
+          FROM debian:jessie
+          RUN apt-get update && apt-get install -y \
+            build-essential \
+            ocaml \
+            ocaml-findlib \
+            ocaml-native-compilers \
+            libpcre3-dev \
+            pkg-config \
+            autoconf \
+            automake \
+            libtool \
+            m4 \
+            curl \
+            wget \
+            ca-certificates
 
-            cd /tmp
-            wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz
-            tar -xf 1.0.7.tar.gz
-            cd coccinelle-1.0.7
+          WORKDIR /src
+          RUN wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz && \
+              tar -xzf 1.0.7.tar.gz && cd coccinelle-1.0.7 && \
+              ./autogen && \
+              ./configure --prefix=/opt/spatch --disable-python --disable-pcre && \
+              make -j1 && make install
 
-            autoreconf -fiv
+          RUN cd /opt && \
+              tar -czf /src/spatch-1.0.7-static.tar.gz spatch
+          EOF
 
-            CC=musl-gcc ./configure \
-              --disable-python \
-              --disable-pcre \
-              --disable-shared \
-              --enable-ocaml \
-              --prefix=/opt/spatch-static
+          docker build -t spatch-builder .
+          docker create --name extract spatch-builder
+          docker cp extract:/src/spatch-1.0.7-static.tar.gz ./output/
+          docker rm extract
 
-            make -j1 LDFLAGS='-static'
-            make install
-
-            mkdir -p /output/spatch-release/bin
-            cp /opt/spatch-static/bin/spatch /output/spatch-release/bin/
-            echo "Coccinelle 1.0.7 static build" > /output/spatch-release/README.txt
-
-            cd /output
-            tar -czf spatch-static-1.0.7.tar.gz spatch-release
-          "
-
-      - name: Upload release asset
-        uses: softprops/action-gh-release@v1
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: spatch-1.0.7-static
-          name: "Coccinelle 1.0.7 Static (GLIBC 2.23 compatible)"
-          body: "This is a static build of Coccinelle 1.0.7 using musl-gcc, compatible with Ubuntu 16.04 (GLIBC 2.23)."
-          files: spatch-static-1.0.7.tar.gz
+          name: Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
+          files: output/spatch-1.0.7-static.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
