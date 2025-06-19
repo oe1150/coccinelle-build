@@ -1,305 +1,120 @@
-name: Build Static Coccinelle 1.0.7+ (GLIBC 2.23 Compatible) Claude
+name: Build Static Coccinelle 1.0.7+ (GLIBC 2.23 Compatible)
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
-  
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
     - name: Build Static Coccinelle in Ubuntu 16.04
       run: |
-        echo "Building static Coccinelle for maximum compatibility"
-        
+        echo "Building static Coccinelle for GLIBC 2.23 compatibility"
+
         docker pull ubuntu:16.04
-        
-        echo '#!/bin/bash' > build_static.sh
-        echo 'set -e' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'echo "=== Building Coccinelle in Ubuntu 16.04 ==="' >> build_static.sh
-        echo 'echo "GLIBC version: $(ldd --version | head -1)"' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'apt-get update' >> build_static.sh
-        echo 'apt-get install -y \' >> build_static.sh
-        echo '    build-essential \' >> build_static.sh
-        echo '    ocaml \' >> build_static.sh
-        echo '    ocaml-native-compilers \' >> build_static.sh
-        echo '    ocaml-findlib \' >> build_static.sh
-        echo '    camlp4 \' >> build_static.sh
-        echo '    libpcre3-dev \' >> build_static.sh
-        echo '    pkg-config \' >> build_static.sh
-        echo '    python3-dev \' >> build_static.sh
-        echo '    autoconf \' >> build_static.sh
-        echo '    automake \' >> build_static.sh
-        echo '    libtool \' >> build_static.sh
-        echo '    m4 \' >> build_static.sh
-        echo '    wget \' >> build_static.sh
-        echo '    curl \' >> build_static.sh
-        echo '    ca-certificates' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'echo "OCaml version: $(ocaml -version)"' >> build_static.sh
-        echo '' >> build_static.sh
-        echo '# Install num library manually for Ubuntu 16.04' >> build_static.sh
-        echo 'cd /tmp' >> build_static.sh
-        echo 'wget -q https://github.com/ocaml/num/archive/refs/tags/v1.1.tar.gz || \\' >> build_static.sh
-        echo '    wget -q https://github.com/ocaml/num/archive/v1.1.tar.gz' >> build_static.sh
-        echo 'if [ -f v1.1.tar.gz ]; then' >> build_static.sh
-        echo '    tar -xzf v1.1.tar.gz' >> build_static.sh
-        echo '    cd num-1.1' >> build_static.sh
-        echo '    make' >> build_static.sh
-        echo '    make install' >> build_static.sh
-        echo '    cd /tmp' >> build_static.sh
-        echo '    rm -rf num-1.1 v1.1.tar.gz' >> build_static.sh
-        echo 'fi' >> build_static.sh
-        echo '' >> build_static.sh
-        echo '# Try to install PCRE OCaml bindings' >> build_static.sh
-        echo 'if ! dpkg -l | grep -q libpcre-ocaml-dev; then' >> build_static.sh
-        echo '    wget -q https://github.com/mmottl/pcre-ocaml/releases/download/7.4.1/pcre-7.4.1.tbz || true' >> build_static.sh
-        echo '    if [ -f pcre-7.4.1.tbz ]; then' >> build_static.sh
-        echo '        tar -xjf pcre-7.4.1.tbz' >> build_static.sh
-        echo '        cd pcre-7.4.1' >> build_static.sh
-        echo '        ./configure' >> build_static.sh
-        echo '        make' >> build_static.sh
-        echo '        make install' >> build_static.sh
-        echo '        cd /tmp' >> build_static.sh
-        echo '        rm -rf pcre-7.4.1*' >> build_static.sh
-        echo '    fi' >> build_static.sh
-        echo 'fi' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'cd /tmp' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'for VERSION in "1.0.7" "1.0.6" "1.0.5"; do' >> build_static.sh
-        echo '    echo "========================================="' >> build_static.sh
-        echo '    echo "Attempting build of Coccinelle $VERSION"' >> build_static.sh
-        echo '    echo "========================================="' >> build_static.sh
-        echo '    ' >> build_static.sh
-        echo '    rm -rf coccinelle-*' >> build_static.sh
-        echo '    ' >> build_static.sh
-        echo '    if wget -q https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz; then' >> build_static.sh
-        echo '        tar -xzf $VERSION.tar.gz' >> build_static.sh
-        echo '        cd coccinelle-$VERSION' >> build_static.sh
-        echo '        ' >> build_static.sh
-        echo '        echo "Generating configure script..."' >> build_static.sh
-        echo '        if [ -f autogen ]; then' >> build_static.sh
-        echo '            ./autogen' >> build_static.sh
-        echo '        else' >> build_static.sh
-        echo '            autoreconf -fiv' >> build_static.sh
-        echo '        fi' >> build_static.sh
-        echo '        ' >> build_static.sh
-        echo '        echo "Configuring..."' >> build_static.sh
-        echo '        # Try different configuration options' >> build_static.sh
-        echo '        CONFIG_SUCCESS=0' >> build_static.sh
-        echo '        ' >> build_static.sh
-        echo '        # First try: minimal configuration' >> build_static.sh
-        echo '        if ./configure --prefix=/opt/static-spatch --disable-opt --disable-pcre --disable-python; then' >> build_static.sh
-        echo '            CONFIG_SUCCESS=1' >> build_static.sh
-        echo '        # Second try: with pcre if available' >> build_static.sh
-        echo '        elif ./configure --prefix=/opt/static-spatch --disable-opt --disable-python; then' >> build_static.sh
-        echo '            CONFIG_SUCCESS=1' >> build_static.sh
-        echo '        # Third try: absolute minimal' >> build_static.sh
-        echo '        elif ./configure --prefix=/opt/static-spatch; then' >> build_static.sh
-        echo '            CONFIG_SUCCESS=1' >> build_static.sh
-        echo '        fi' >> build_static.sh
-        echo '        ' >> build_static.sh
-        echo '        if [ $CONFIG_SUCCESS -eq 1 ]; then' >> build_static.sh
-        echo '            echo "Configuration successful"' >> build_static.sh
-        echo '            ' >> build_static.sh
-        echo '            echo "Building..."' >> build_static.sh
-        echo '            if make -j1; then' >> build_static.sh
-        echo '                echo "Build successful"' >> build_static.sh
-        echo '                ' >> build_static.sh
-        echo '                SPATCH_FOUND=""' >> build_static.sh
-        echo '                for spatch_name in "spatch" "spatch.opt" "spatch.byte"; do' >> build_static.sh
-        echo '                    if [ -f "$spatch_name" ]; then' >> build_static.sh
-        echo '                        SPATCH_FOUND="$spatch_name"' >> build_static.sh
-        echo '                        echo "Found: $spatch_name"' >> build_static.sh
-        echo '                        file "$spatch_name"' >> build_static.sh
-        echo '                        ldd "$spatch_name" 2>&1 || echo "Static binary or OCaml bytecode"' >> build_static.sh
-        echo '                        break' >> build_static.sh
-        echo '                    fi' >> build_static.sh
-        echo '                done' >> build_static.sh
-        echo '                ' >> build_static.sh
-        echo '                if [ -n "$SPATCH_FOUND" ]; then' >> build_static.sh
-        echo '                    echo "Testing spatch..."' >> build_static.sh
-        echo '                    if ./"$SPATCH_FOUND" --version; then' >> build_static.sh
-        echo '                        echo "spatch works"' >> build_static.sh
-        echo '                        ' >> build_static.sh
-        echo '                        if [ "$SPATCH_FOUND" != "spatch" ]; then' >> build_static.sh
-        echo '                            cp "$SPATCH_FOUND" spatch' >> build_static.sh
-        echo '                        fi' >> build_static.sh
-        echo '                        ' >> build_static.sh
-        echo '                        make install' >> build_static.sh
-        echo '                        echo "$VERSION" > /tmp/SUCCESS_VERSION' >> build_static.sh
-        echo '                        echo "Coccinelle $VERSION installed"' >> build_static.sh
-        echo '                        break' >> build_static.sh
-        echo '                    fi' >> build_static.sh
-        echo '                fi' >> build_static.sh
-        echo '            else' >> build_static.sh
-        echo '                echo "Build failed, trying without optimization..."' >> build_static.sh
-        echo '                make clean || true' >> build_static.sh
-        echo '                if make -j1 OCAMLOPT=ocamlc; then' >> build_static.sh
-        echo '                    echo "Bytecode build successful"' >> build_static.sh
-        echo '                    if [ -f spatch ]; then' >> build_static.sh
-        echo '                        echo "Testing bytecode spatch..."' >> build_static.sh
-        echo '                        if ./spatch --version; then' >> build_static.sh
-        echo '                            make install' >> build_static.sh
-        echo '                            echo "$VERSION" > /tmp/SUCCESS_VERSION' >> build_static.sh
-        echo '                            echo "Coccinelle $VERSION (bytecode) installed"' >> build_static.sh
-        echo '                            break' >> build_static.sh
-        echo '                        fi' >> build_static.sh
-        echo '                    fi' >> build_static.sh
-        echo '                fi' >> build_static.sh
-        echo '            fi' >> build_static.sh
-        echo '        else' >> build_static.sh
-        echo '            echo "Configuration failed for version $VERSION"' >> build_static.sh
-        echo '        fi' >> build_static.sh
-        echo '        ' >> build_static.sh
-        echo '        cd /tmp' >> build_static.sh
-        echo '    else' >> build_static.sh
-        echo '        echo "Failed to download version $VERSION"' >> build_static.sh
-        echo '    fi' >> build_static.sh
-        echo 'done' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'if [ ! -f /tmp/SUCCESS_VERSION ]; then' >> build_static.sh
-        echo '    echo "All builds failed"' >> build_static.sh
-        echo '    exit 1' >> build_static.sh
-        echo 'fi' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'SUCCESS_VERSION=$(cat /tmp/SUCCESS_VERSION)' >> build_static.sh
-        echo 'echo "Successfully built Coccinelle $SUCCESS_VERSION"' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'echo "Final binary info:"' >> build_static.sh
-        echo '/opt/static-spatch/bin/spatch --version' >> build_static.sh
-        echo 'echo "Dependencies:"' >> build_static.sh
-        echo 'ldd /opt/static-spatch/bin/spatch 2>&1 || echo "Static binary or OCaml bytecode"' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'cd /opt' >> build_static.sh
-        echo 'rm -rf portable-coccinelle' >> build_static.sh
-        echo 'mkdir -p portable-coccinelle/bin' >> build_static.sh
-        echo 'mkdir -p portable-coccinelle/lib' >> build_static.sh
-        echo 'mkdir -p portable-coccinelle/share' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'cp static-spatch/bin/spatch portable-coccinelle/bin/' >> build_static.sh
-        echo 'chmod +x portable-coccinelle/bin/spatch' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'if [ -d static-spatch/lib/coccinelle ]; then' >> build_static.sh
-        echo '    cp -r static-spatch/lib/coccinelle portable-coccinelle/lib/' >> build_static.sh
-        echo 'fi' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'if [ -d static-spatch/share/coccinelle ]; then' >> build_static.sh
-        echo '    cp -r static-spatch/share/coccinelle portable-coccinelle/share/' >> build_static.sh
-        echo 'fi' >> build_static.sh
-        echo '' >> build_static.sh
-        echo '# Copy OCaml runtime and libraries' >> build_static.sh
-        echo 'for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do' >> build_static.sh
-        echo '    if [ -d "$ocaml_dir" ]; then' >> build_static.sh
-        echo '        mkdir -p portable-coccinelle/lib/ocaml' >> build_static.sh
-        echo '        cp -r "$ocaml_dir"/* portable-coccinelle/lib/ocaml/ 2>/dev/null || true' >> build_static.sh
-        echo '        break' >> build_static.sh
-        echo '    fi' >> build_static.sh
-        echo 'done' >> build_static.sh
-        echo '' >> build_static.sh
-        echo '# Create wrapper script' >> build_static.sh
-        echo 'echo "#!/bin/bash" > portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "SCRIPT_DIR=\"\$( cd \"\$( dirname \"\${BASH_SOURCE[0]}\" )\" &> /dev/null && pwd )\"" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "export LD_LIBRARY_PATH=\"\$SCRIPT_DIR/lib:\$SCRIPT_DIR/lib/ocaml:\$LD_LIBRARY_PATH\"" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "export OCAML_TOPLEVEL_PATH=\"\$SCRIPT_DIR/lib/ocaml\"" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "export CAML_LD_LIBRARY_PATH=\"\$SCRIPT_DIR/lib/ocaml/stublibs:\$CAML_LD_LIBRARY_PATH\"" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo 'echo "exec \"\$SCRIPT_DIR/bin/spatch\" \"\$@\"" >> portable-coccinelle/spatch.sh' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'chmod +x portable-coccinelle/spatch.sh' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'cd portable-coccinelle' >> build_static.sh
-        echo 'ln -sf spatch.sh spatch' >> build_static.sh
-        echo 'cd /opt' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'echo "Testing final package..."' >> build_static.sh
-        echo './portable-coccinelle/spatch.sh --version' >> build_static.sh
-        echo '' >> build_static.sh
-        echo 'tar -czf "coccinelle-${SUCCESS_VERSION}-static-ubuntu16.tar.gz" portable-coccinelle/' >> build_static.sh
-        echo 'echo "Static package created"' >> build_static.sh
-        echo 'ls -la *.tar.gz' >> build_static.sh
-        
-        chmod +x build_static.sh
-        
-        echo "Running build in Ubuntu 16.04 container..."
+
+        cat > build_static.sh << 'EOF'
+#!/bin/bash
+set -e
+
+# Fix APT sources since Xenial is EOL
+cat > /etc/apt/sources.list <<EOF2
+deb http://archive.ubuntu.com/ubuntu xenial main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu xenial-updates main restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu xenial-security main restricted universe multiverse
+EOF2
+
+apt-get update
+apt-get install -y \
+  build-essential \
+  ocaml \
+  ocaml-native-compilers \
+  ocaml-findlib \
+  libnum-ocaml-dev \
+  libpcre3-dev \
+  libpcre-ocaml-dev \
+  pkg-config \
+  python3-dev \
+  autoconf \
+  automake \
+  libtool \
+  m4 \
+  wget \
+  curl \
+  ca-certificates \
+  musl-dev \
+  musl-tools
+
+cd /tmp
+
+for VERSION in "1.0.7" "1.0.6"; do
+  wget -q https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
+  tar -xzf $VERSION.tar.gz
+  cd coccinelle-$VERSION
+
+  autoreconf -fiv || true
+
+  ./configure \
+    --prefix=/opt/static-spatch \
+    --disable-opt \
+    --disable-pcre \
+    --disable-python \
+    --disable-shared \
+    --enable-static \
+    CC="gcc -static" \
+    LDFLAGS="-static" \
+    OCAMLC_OPT="-ccopt -static" \
+    OCAMLOPT_OPT="-ccopt -static" || true
+
+  make -j1 LDFLAGS="-static" || true
+
+  for spatch_name in spatch spatch.opt spatch.byte; do
+    if [ -f "$spatch_name" ]; then
+      cp "$spatch_name" spatch
+      chmod +x spatch
+      mkdir -p /opt/static-spatch/bin
+      cp spatch /opt/static-spatch/bin/
+      echo "$VERSION" > /tmp/SUCCESS_VERSION
+      break
+    fi
+  done
+
+  [ -f /tmp/SUCCESS_VERSION ] && break
+  cd /tmp
+
+done
+
+if [ ! -f /tmp/SUCCESS_VERSION ]; then
+  echo "❌ Build failed"
+  exit 1
+fi
+
+cd /opt
+mkdir -p portable-coccinelle/bin
+cp static-spatch/bin/spatch portable-coccinelle/bin/
+chmod +x portable-coccinelle/bin/spatch
+
+cd /opt
+VERSION=$(cat /tmp/SUCCESS_VERSION)
+tar -czf coccinelle-${VERSION}-static-ubuntu16.tar.gz portable-coccinelle/
+cp coccinelle-${VERSION}-static-ubuntu16.tar.gz /output/
+EOF
+
         docker run --rm \
-            -v $(pwd)/build_static.sh:/build_static.sh \
-            -v $(pwd):/output \
-            ubuntu:16.04 \
-            bash -c "/build_static.sh && cp /opt/*.tar.gz /output/"
-        
-        if ls coccinelle-*-static-ubuntu16.tar.gz 1> /dev/null 2>&1; then
-            PACKAGE_FILE=$(ls coccinelle-*-static-ubuntu16.tar.gz | head -1)
-            echo "Build successful!"
-            echo "Package: $PACKAGE_FILE"
-            echo "Size: $(du -h $PACKAGE_FILE | cut -f1)"
-            
-            VERSION=$(echo "$PACKAGE_FILE" | sed 's/coccinelle-\(.*\)-static-ubuntu16.tar.gz/\1/')
-            
-            echo "Creating GitHub Release..."
-            RELEASE_TAG="coccinelle-static-${VERSION}-$(date +%Y%m%d-%H%M%S)"
-            RELEASE_NAME="Coccinelle ${VERSION} Static (Ubuntu 16.04)"
-            
-            echo '{' > payload.json
-            echo '  "tag_name": "'"$RELEASE_TAG"'",' >> payload.json
-            echo '  "target_commitish": "main",' >> payload.json
-            echo '  "name": "'"$RELEASE_NAME"'",' >> payload.json
-            echo '  "body": "Static Coccinelle '"$VERSION"' for Ubuntu 16.04+ (GLIBC 2.23+)\\n\\nThis package includes:\\n- Coccinelle spatch binary\\n- Required OCaml runtime libraries\\n- Wrapper script for easy execution\\n\\nUsage: Extract and run `./spatch.sh --version`",' >> payload.json
-            echo '  "draft": false,' >> payload.json
-            echo '  "prerelease": false' >> payload.json
-            echo '}' >> payload.json
-            
-            RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
-              -d @payload.json)
-            
-            HTTP_CODE=$(echo "$RELEASE_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-            RESPONSE_BODY=$(echo "$RELEASE_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
-            
-            if [ "$HTTP_CODE" = "201" ]; then
-                UPLOAD_URL=$(echo "$RESPONSE_BODY" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
-                RELEASE_HTML_URL=$(echo "$RESPONSE_BODY" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
-                
-                echo "Release created: $RELEASE_HTML_URL"
-                
-                UPLOAD_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
-                  -H "Authorization: token $GITHUB_TOKEN" \
-                  -H "Content-Type: application/gzip" \
-                  --data-binary "@$PACKAGE_FILE" \
-                  "${UPLOAD_URL}?name=$PACKAGE_FILE")
-                
-                UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-                
-                if [ "$UPLOAD_HTTP_CODE" = "201" ]; then
-                    echo "========================================="
-                    echo "SUCCESS! Static Coccinelle"
-                    echo "========================================="
-                    echo "Release: $RELEASE_HTML_URL"
-                    echo "Package: $PACKAGE_FILE"
-                    echo "Version: Coccinelle $VERSION"
-                    echo "Target: Ubuntu 16.04+ (GLIBC 2.23+)"
-                    echo "Usage: Extract and run ./spatch.sh --version"
-                    echo "========================================="
-                else
-                    echo "Upload failed with code: $UPLOAD_HTTP_CODE"
-                    echo "Response: $(echo "$UPLOAD_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')"
-                fi
-            else
-                echo "Release creation failed with code: $HTTP_CODE"
-                echo "Response: $RESPONSE_BODY"
-            fi
-        else
-            echo "No package file found"
-            exit 1
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          -v $(pwd)/build_static.sh:/build_static.sh \
+          -v $(pwd):/output \
+          ubuntu:16.04 \
+          bash -c "chmod +x /build_static.sh && /build_static.sh"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: static-coccinelle
+        path: coccinelle-*-static-ubuntu16.tar.gz
