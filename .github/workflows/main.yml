@@ -1,360 +1,61 @@
-name: Build Static Coccinelle for Ubuntu 16
+name: Build Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 permissions:
   contents: write
-  
+
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Build Static Coccinelle 1.0.8 for Ubuntu 16
-      run: |
-        echo "🚀 Building Coccinelle 1.0.8 for Ubuntu 16 compatibility..."
-        
-        # Create build script with simpler heredoc syntax
-        cat > build_coccinelle.sh << 'BUILD_SCRIPT_END'
-        #!/bin/bash
-        set -ex
-        
-        echo "Building Coccinelle 1.0.8 for Ubuntu 16..."
-        ldd --version
-        
-        echo "Installing dependencies..."
-        apt-get update
-        apt-get install -y build-essential ocaml ocaml-native-compilers ocaml-findlib camlp4 libpcre3-dev pkg-config autoconf automake libtool m4 wget curl python-dev python3-dev tcsh csh || true
-        
-        echo "Downloading Coccinelle..."
-        cd /tmp
-        wget -O coccinelle-1.0.8.tar.gz https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.8.tar.gz
-        tar -xzf coccinelle-1.0.8.tar.gz
-        cd coccinelle-1.0.8
-        
-        echo "Creating Python stubs..."
-        mkdir -p python
-        
-        # Create no_pycocci.mli
-        cat > python/no_pycocci.mli << 'MLI_END'
-val python_support : bool
-val initialised : bool ref  
-val exited : bool ref
-exception Pycocciexception
-val py_finalize : unit -> unit
-val py_isinitialized : unit -> bool
-val flush_stdout_and_stderr : unit -> unit
-val run_constraint : 'a -> bool
-val inc_match : unit -> unit
-val run : string -> unit
-val pyrun_simplestring : string -> unit
-val retrieve_script_variables : unit -> 'a list
-val set_coccifile : string -> unit
-val unpickle_variable : string -> 'a
-val pickle_variable : 'a -> string
-val construct_script_variables : 'a list -> unit
-val construct_variables : string list -> unit
-val build_classes : 'a list -> unit
-MLI_END
+      - name: Checkout
+        uses: actions/checkout@v4
 
-        # Create no_pycocci.ml
-        cat > python/no_pycocci.ml << 'ML_END'
-let python_support = false
-let initialised = ref false
-let exited = ref false
-exception Pycocciexception
-let py_finalize () = ()
-let py_isinitialized () = false
-let flush_stdout_and_stderr () = ()
-let run_constraint _ = false
-let inc_match () = ()
-let run _ = ()
-let pyrun_simplestring _ = ()
-let retrieve_script_variables () = []
-let set_coccifile _ = ()
-let unpickle_variable _ = failwith "Python support disabled"
-let pickle_variable _ = failwith "Python support disabled"
-let construct_script_variables _ = ()
-let construct_variables _ = ()
-let build_classes _ = ()
-ML_END
+      - name: Build Static Spatch in Docker (Debian Jessie)
+        run: |
+          echo "=== Building static spatch in Debian Jessie ==="
+          mkdir -p output
 
-        # Copy as pycocci files too
-        cp python/no_pycocci.mli python/pycocci.mli
-        cp python/no_pycocci.ml python/pycocci.ml
-        
-        # Create pycocci_aux files
-        cat > python/pycocci_aux.mli << 'AUX_MLI_END'
-val check_return_value : 'a -> unit
-val convert_list : ('a -> 'b) -> 'a list -> 'b  
-val pystring_fromstring : string -> 'a
-val pystring_asstring : 'a -> string
-AUX_MLI_END
+          cat > Dockerfile <<'EOF'
+FROM debian:jessie
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  ocaml \
+  ocaml-findlib \
+  ocaml-native-compilers \
+  libpcre3-dev \
+  pkg-config \
+  autoconf \
+  automake \
+  libtool \
+  m4 \
+  curl \
+  wget \
+  ca-certificates
 
-        cat > python/pycocci_aux.ml << 'AUX_ML_END'
-let check_return_value _ = ()
-let convert_list _ _ = failwith "Python disabled"
-let pystring_fromstring _ = failwith "Python disabled" 
-let pystring_asstring _ = failwith "Python disabled"
-AUX_ML_END
+WORKDIR /src
+RUN wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz && \
+    tar -xzf 1.0.7.tar.gz && cd coccinelle-1.0.7 && \
+    ./autogen && \
+    ./configure --prefix=/opt/spatch --disable-python --disable-pcre CC="gcc -static" LDFLAGS="-static" && \
+    make -j1 && make install
 
-        # Create basic Makefile
-        echo 'all:' > python/Makefile
-        echo -e '\t@echo "Python disabled"' >> python/Makefile
-        echo 'clean:' >> python/Makefile
-        echo -e '\t@echo "Python disabled"' >> python/Makefile
-        echo '.PHONY: all clean' >> python/Makefile
-        
-        # Create dependency file
-        touch python/.depend
-        
-        echo "Configuring build..."
-        if [ -f autogen ]; then
-            ./autogen
-        elif [ -f autogen.sh ]; then
-            ./autogen.sh
-        else
-            autoreconf -fiv
-        fi
-        
-        export CFLAGS="-static-libgcc -O2 -fPIC"
-        export LDFLAGS="-static-libgcc -Wl,--as-needed"
-        
-        # Pre-patch Makefile templates
-        if [ -f Makefile.in ]; then
-            sed -i 's/-I python//g' Makefile.in
-        fi
-        
-        ./configure --prefix=/opt/coccinelle --disable-python --disable-pcre --disable-opt --enable-release --without-python --without-pycaml CC="gcc" CXX="g++" PYTHON="no" PYCAML="no"
-        
-        # Post-configure cleanup
-        if [ -f Makefile ]; then
-            sed -i 's/-I python//g' Makefile
-            sed -i 's/python\/[^ ]* //g' Makefile
-        fi
-        
-        echo "Building..."
-        make clean || true
-        make depend 2>&1 | grep -v "Bad -I option: python" || true
-        
-        BUILD_OK=false
-        
-        if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
-            echo "Standard build successful"
-            BUILD_OK=true
-        else
-            echo "Standard build failed, trying alternatives..."
-            
-            # Try building core components
-            make clean
-            if make spatch -j1 2>&1 | grep -v "Bad -I option: python"; then
-                echo "Core build successful"
-                BUILD_OK=true
-            else
-                echo "Trying manual component build..."
-                for comp in commons parsing_c parsing_cocci ctl engine; do
-                    if [ -d "$comp" ]; then
-                        (cd "$comp" && make all) || echo "Warning: $comp failed"
-                    fi
-                done
-                
-                if make spatch 2>&1 | grep -v "Bad -I option: python"; then
-                    echo "Manual build successful"
-                    BUILD_OK=true
-                fi
-            fi
-        fi
-        
-        if [ "$BUILD_OK" = "false" ]; then
-            echo "All builds failed"
-            exit 1
-        fi
-        
-        echo "Installing..."
-        if make install; then
-            echo "Installation successful"
-        else
-            echo "Manual installation..."
-            mkdir -p /opt/coccinelle/bin
-            
-            # Find spatch binary
-            FOUND=false
-            for name in spatch spatch.byte spatch.opt main.byte main.opt; do
-                if [ -f "$name" ]; then
-                    cp "$name" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    FOUND=true
-                    break
-                fi
-            done
-            
-            if [ "$FOUND" = "false" ]; then
-                SPATH=$(find . -name "*spatch*" -type f -executable | head -1)
-                if [ -n "$SPATH" ]; then
-                    cp "$SPATH" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    FOUND=true
-                fi
-            fi
-            
-            if [ "$FOUND" = "false" ]; then
-                echo "No spatch binary found"
-                exit 1
-            fi
-        fi
-        
-        echo "Checking binary type..."
-        if [ -f /opt/coccinelle/bin/spatch ]; then
-            file /opt/coccinelle/bin/spatch
-            
-            # Handle tcsh scripts
-            if head -1 /opt/coccinelle/bin/spatch 2>/dev/null | grep -q tcsh; then
-                echo "Converting tcsh script to bash wrapper..."
-                mv /opt/coccinelle/bin/spatch /opt/coccinelle/bin/spatch.tcsh
-                cat > /opt/coccinelle/bin/spatch << 'WRAPPER_END'
-#!/bin/bash
-SCRIPT_DIR="$(dirname "$0")"
-export PATH="/bin:/usr/bin:$PATH"
-if command -v tcsh >/dev/null 2>&1; then
-    exec tcsh "$SCRIPT_DIR/spatch.tcsh" "$@"
-elif command -v csh >/dev/null 2>&1; then
-    exec csh "$SCRIPT_DIR/spatch.tcsh" "$@"
-else
-    echo "Error: tcsh or csh required" >&2
-    exit 1
-fi
-WRAPPER_END
-                chmod +x /opt/coccinelle/bin/spatch
-            fi
-        fi
-        
-        echo "Testing..."
-        if ! /opt/coccinelle/bin/spatch --version; then
-            echo "Testing alternative flags..."
-            /opt/coccinelle/bin/spatch -version || /opt/coccinelle/bin/spatch --help | head -3 || echo "Some issues but continuing..."
-        fi
-        
-        echo "Creating package..."
-        cd /opt
-        tar -czf coccinelle-1.0.8-ubuntu16-static.tar.gz coccinelle/
-        cp *.tar.gz /output/
-        echo "Package created successfully"
-        BUILD_SCRIPT_END
-        
-        chmod +x build_coccinelle.sh
-        
-        echo "Starting Docker build..."
-        docker run --rm -v $(pwd)/build_coccinelle.sh:/build_coccinelle.sh -v $(pwd):/output ubuntu:16.04 bash -c "/build_coccinelle.sh"
-    
-    - name: Verify build
-      run: |
-        if ls coccinelle-*.tar.gz 1> /dev/null 2>&1; then
-          PACKAGE=$(ls coccinelle-*.tar.gz | head -1)
-          echo "Package created: $PACKAGE"
-          echo "Package size: $(du -h $PACKAGE | cut -f1)"
-          
-          mkdir -p test_extract
-          tar -xzf $PACKAGE -C test_extract
-          
-          if [ -f test_extract/coccinelle/bin/spatch ]; then
-            echo "spatch binary found in package"
-            
-            echo "Testing compatibility with Ubuntu 16..."
-            docker run --rm -v $(pwd)/test_extract:/test ubuntu:16.04 bash -c "
-              apt-get update && apt-get install -y tcsh csh
-              
-              echo 'System info:'
-              ldd --version | head -1
-              
-              echo 'Binary info:'
-              file /test/coccinelle/bin/spatch
-              
-              echo 'Testing spatch:'
-              if /test/coccinelle/bin/spatch --version; then
-                echo 'SUCCESS: Works on Ubuntu 16.04'
-              elif /test/coccinelle/bin/spatch -version; then
-                echo 'SUCCESS: Works with -version flag'
-              else
-                echo 'Testing basic functionality...'
-                if /test/coccinelle/bin/spatch --help | head -3; then
-                  echo 'SUCCESS: Help works'
-                else
-                  echo 'FAILED: Binary issues'
-                  head -3 /test/coccinelle/bin/spatch || true
-                  exit 1
-                fi
-              fi
-            "
-            
-            echo "PACKAGE_NAME=$PACKAGE" >> $GITHUB_ENV
-          else
-            echo "spatch binary not found"
-            exit 1
-          fi
-        else
-          echo "No package found"
-          exit 1
-        fi
-    
-    - name: Create Release
-      if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: coccinelle-1.0.8-${{ github.run_number }}
-        name: "Coccinelle 1.0.8 for Ubuntu 16 (Build ${{ github.run_number }})"
-        body: |
-          # Coccinelle 1.0.8 Static Build for Ubuntu 16
-          
-          **✅ GLIBC Compatibility Verified**: This build has been tested on Ubuntu 16.04 (GLIBC 2.23)
-          
-          This version resolves the `GLIBC_2.29 not found` and `tcsh interpreter` errors.
-          
-          ## 🚀 Quick Installation for QSDK
-          
-          ```bash
-          # Install tcsh first (required)
-          sudo apt-get update && sudo apt-get install -y tcsh
-          
-          # Download and extract
-          cd /home/cassie_xiao
-          wget https://github.com/${{ github.repository }}/releases/latest/download/coccinelle-1.0.8-ubuntu16-static.tar.gz
-          tar -xzf coccinelle-1.0.8-ubuntu16-static.tar.gz
-          
-          # Set up environment
-          export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"
-          echo 'export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"' >> ~/.bashrc
-          
-          # Test
-          spatch --version
-          
-          # Run QSDK build
-          cd /home/cassie_xiao/20250612/qsdk
-          make package/feeds/wlan_open/mac80211/compile
-          ```
-          
-          ## Requirements
-          - Ubuntu 16.04+ (GLIBC 2.23+)
-          - tcsh or csh installed
-          
-          Built: ${{ github.run_date }}
-        files: |
-          coccinelle-*-static.tar.gz
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-ubuntu16-compatible
-        path: coccinelle-*.tar.gz
-        retention-days: 30
+RUN cd /opt && \
+    tar -czf /src/spatch-1.0.7-static.tar.gz spatch
+EOF
+
+          docker build -t spatch-builder .
+          docker create --name extract spatch-builder
+          docker cp extract:/src/spatch-1.0.7-static.tar.gz ./output/
+          docker rm extract
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: spatch-1.0.7-static
+          name: Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
+          files: output/spatch-1.0.7-static.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
