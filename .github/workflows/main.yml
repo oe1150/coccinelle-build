@@ -3,9 +3,9 @@ name: Build Static Spatch 1.0.8 (GLIBC 2.23 Compatible)
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: ["main", "master"]
   pull_request:
-    branches: [ main, master ]
+    branches: ["main", "master"]
 
 permissions:
   contents: write
@@ -23,7 +23,7 @@ jobs:
           echo "Starting Docker build for native binary..."
           mkdir -p output
 
-cat > Dockerfile <<'EOF'
+          cat > Dockerfile <<'EOF'
 FROM ubuntu:16.04
 
 RUN apt-get update && apt-get install -y \
@@ -50,7 +50,7 @@ WORKDIR /tmp
 RUN wget -O coccinelle-1.0.8.tar.gz https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.8.tar.gz && \
     tar -xzf coccinelle-1.0.8.tar.gz && \
     cd coccinelle-1.0.8 && \
-    ./autogen || autoreconf -fiv && \
+    (./autogen || autoreconf -fiv) && \
     ./configure --prefix=/opt/coccinelle \
       --disable-python \
       --disable-pcre \
@@ -84,18 +84,37 @@ EOF
           body: |
             # Coccinelle 1.0.8 Native Binary Build for Ubuntu 16
 
-            ✅ NO TCSH REQUIRED  
-            ✅ GLIBC 2.23 Compatible  
-            ✅ Native binary works in QSDK builds
+            **✅ NO TCSH REQUIRED**: This is a native binary that does NOT require tcsh/csh!
+            **✅ GLIBC Compatibility**: Tested on Ubuntu 16.04 (GLIBC 2.23)
+
+            This version resolves both the `GLIBC_2.29 not found` and `tcsh interpreter` errors.
+
+            ## 🚀 Quick Installation for QSDK (No tcsh needed!)
 
             ```bash
+            # Download and extract
             cd ~
             wget https://github.com/${{ github.repository }}/releases/latest/download/coccinelle-1.0.8-ubuntu16-binary.tar.gz
             tar -xzf coccinelle-1.0.8-ubuntu16-binary.tar.gz
+
+            # Set up environment
             export PATH="$HOME/coccinelle/bin:$PATH"
             echo 'export PATH="$HOME/coccinelle/bin:$PATH"' >> ~/.bashrc
+
+            # Test
             spatch --version
+
+            # Run QSDK build
+            cd ~/20250612/qsdk
+            make package/feeds/wlan_open/mac80211/compile
             ```
+
+            ## ✅ Advantages
+            - No tcsh dependency
+            - GLIBC 2.23 compatible
+            - Standalone native OCaml binary
+
+            Built on: ${{ github.run_id }}
           files: output/coccinelle-1.0.8-ubuntu16-binary.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
