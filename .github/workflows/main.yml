@@ -19,7 +19,7 @@ jobs:
         docker pull ubuntu:16.04
         
         # 創建構建腳本
-        cat > build_static.sh << 'EOF'
+        cat > build_static.sh << 'SCRIPT_EOF'
 #!/bin/bash
 set -e
 
@@ -44,18 +44,16 @@ apt-get install -y \
     m4 \
     wget \
     curl \
-    ca-certificates \
-    musl-dev \
-    musl-tools
+    ca-certificates
 
 echo "OCaml version: $(ocaml -version)"
 
 cd /tmp
 
-# 編譯靜態版本的 Coccinelle 1.0.7
+# 編譯版本的 Coccinelle 1.0.7
 for VERSION in "1.0.7" "1.0.6"; do
     echo "========================================="
-    echo "Attempting static build of Coccinelle $VERSION"
+    echo "Attempting build of Coccinelle $VERSION"
     echo "========================================="
     
     rm -rf coccinelle-*
@@ -71,79 +69,39 @@ for VERSION in "1.0.7" "1.0.6"; do
             autoreconf -fiv
         fi
         
-        echo "Configuring for static build..."
-        # 嘗試靜態編譯配置
-        if ./configure \
-            --prefix=/opt/static-spatch \
-            --disable-opt \
-            --disable-pcre \
-            --disable-python \
-            --disable-shared \
-            --enable-static \
-            CC="gcc -static" \
-            LDFLAGS="-static" \
-            OCAMLC_OPT="-ccopt -static" \
-            OCAMLOPT_OPT="-ccopt -static"; then
+        echo "Configuring..."
+        if ./configure --prefix=/opt/static-spatch --disable-opt --disable-pcre; then
+            echo "Configuration successful"
             
-            echo "✅ Static configuration successful"
-            
-            echo "Building static version..."
-            if make -j1 LDFLAGS="-static"; then
-                echo "✅ Static build successful!"
+            echo "Building..."
+            if make -j1; then
+                echo "Build successful"
                 
-                # 檢查是否真的是靜態編譯
                 SPATCH_FOUND=""
                 for spatch_name in "spatch" "spatch.opt" "spatch.byte"; do
                     if [ -f "$spatch_name" ]; then
                         SPATCH_FOUND="$spatch_name"
                         echo "Found: $spatch_name"
                         file "$spatch_name"
-                        ldd "$spatch_name" 2>&1 || echo "Static binary (no dynamic dependencies)"
+                        ldd "$spatch_name" 2>&1 || echo "Static binary"
                         break
                     fi
                 done
                 
                 if [ -n "$SPATCH_FOUND" ]; then
-                    echo "Testing static spatch..."
+                    echo "Testing spatch..."
                     if ./"$SPATCH_FOUND" --version; then
-                        echo "✅ Static spatch works!"
+                        echo "spatch works"
                         
-                        # 安裝
                         if [ "$SPATCH_FOUND" != "spatch" ]; then
                             cp "$SPATCH_FOUND" spatch
                         fi
                         
                         make install
                         echo "$VERSION" > /tmp/SUCCESS_VERSION
-                        echo "✅ Static Coccinelle $VERSION installed!"
+                        echo "Coccinelle $VERSION installed"
                         break
                     fi
-                fi
-            fi
-        fi
-        
-        # 如果靜態編譯失敗，嘗試普通編譯但在 Ubuntu 16.04 中
-        echo "Static build failed, trying regular build in Ubuntu 16.04..."
-        make distclean 2>/dev/null || true
-        
-        if ./configure --prefix=/opt/static-spatch --disable-opt --disable-pcre; then
-            if make -j1; then
-                SPATCH_FOUND=""
-                for spatch_name in "spatch" "spatch.opt" "spatch.byte"; do
-                    if [ -f "$spatch_name" ]; then
-                        SPATCH_FOUND="$spatch_name"
-                        break
-                    fi
-                done
-                
-                if [ -n "$SPATCH_FOUND" ] && ./"$SPATCH_FOUND" --version; then
-                    if [ "$SPATCH_FOUND" != "spatch" ]; then
-                        cp "$SPATCH_FOUND" spatch
-                    fi
-                    make install
-                    echo "$VERSION" > /tmp/SUCCESS_VERSION
-                    echo "✅ Regular build successful in Ubuntu 16.04!"
-                    break
                 fi
             fi
         fi
@@ -153,12 +111,12 @@ for VERSION in "1.0.7" "1.0.6"; do
 done
 
 if [ ! -f /tmp/SUCCESS_VERSION ]; then
-    echo "❌ All builds failed"
+    echo "All builds failed"
     exit 1
 fi
 
 SUCCESS_VERSION=$(cat /tmp/SUCCESS_VERSION)
-echo "✅ Successfully built Coccinelle $SUCCESS_VERSION"
+echo "Successfully built Coccinelle $SUCCESS_VERSION"
 
 # 檢查最終二進制
 echo "Final binary info:"
@@ -173,11 +131,10 @@ mkdir -p portable-coccinelle/bin
 mkdir -p portable-coccinelle/lib
 mkdir -p portable-coccinelle/share
 
-# 複製 spatch 二進制
+# 複製文件
 cp static-spatch/bin/spatch portable-coccinelle/bin/
 chmod +x portable-coccinelle/bin/spatch
 
-# 複製庫文件（如果需要）
 if [ -d static-spatch/lib/coccinelle ]; then
     cp -r static-spatch/lib/coccinelle portable-coccinelle/lib/
 fi
@@ -186,7 +143,6 @@ if [ -d static-spatch/share/coccinelle ]; then
     cp -r static-spatch/share/coccinelle portable-coccinelle/share/
 fi
 
-# 複製基礎 OCaml 庫（防萬一）
 for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
     if [ -d "$ocaml_dir" ]; then
         cp -r "$ocaml_dir" portable-coccinelle/lib/
@@ -195,17 +151,13 @@ for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
 done
 
 # 創建啟動腳本
-cat > portable-coccinelle/spatch.sh << 'LAUNCHER'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-
-# 設置環境變數（防萬一）
-export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
-export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-
-# 執行 spatch
-exec "$SCRIPT_DIR/bin/spatch" "$@"
-LAUNCHER
+echo '#!/bin/bash' > portable-coccinelle/spatch.sh
+echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/spatch.sh
+echo '' >> portable-coccinelle/spatch.sh
+echo 'export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"' >> portable-coccinelle/spatch.sh
+echo 'export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"' >> portable-coccinelle/spatch.sh
+echo '' >> portable-coccinelle/spatch.sh
+echo 'exec "$SCRIPT_DIR/bin/spatch" "$@"' >> portable-coccinelle/spatch.sh
 
 chmod +x portable-coccinelle/spatch.sh
 
@@ -214,40 +166,15 @@ cd portable-coccinelle
 ln -sf spatch.sh spatch
 cd /opt
 
-# 創建 README
-FINAL_VERSION=$(/opt/static-spatch/bin/spatch --version | head -1)
-cat > portable-coccinelle/README.md << README
-# Static Coccinelle for Ubuntu 16.04+ (GLIBC 2.23 Compatible)
-
-## Version Information
-$FINAL_VERSION
-Built statically on Ubuntu 16.04 for maximum compatibility
-
-## Features
-- Static compilation for minimal dependencies
-- Compatible with GLIBC 2.23+ (Ubuntu 16.04+)
-- Support for gentree.py (if version 1.0.7+)
-
-## Usage
-\`\`\`bash
-./spatch.sh --version
-./spatch --version
-\`\`\`
-
-## Binary Info
-Built version: $SUCCESS_VERSION
-Static: $(ldd /opt/static-spatch/bin/spatch 2>&1 | head -1)
-README
-
 # 測試
 echo "Testing final package..."
 ./portable-coccinelle/spatch.sh --version
 
 # 打包
 tar -czf "coccinelle-${SUCCESS_VERSION}-static-ubuntu16.tar.gz" portable-coccinelle/
-echo "✅ Static package created!"
+echo "Static package created"
 ls -la *.tar.gz
-EOF
+SCRIPT_EOF
         
         # 在 Ubuntu 16.04 容器中運行構建
         echo "Running build in Ubuntu 16.04 container..."
