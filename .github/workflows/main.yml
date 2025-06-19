@@ -28,7 +28,7 @@ jobs:
         service docker start
         
         # 使用 Docker 在 Ubuntu 16.04 環境中編譯
-        cat > Dockerfile << 'EOF'
+        cat > Dockerfile << 'DOCKERFILE'
 FROM ubuntu:16.04
 
 # 安裝編譯依賴
@@ -62,10 +62,10 @@ RUN ./build_script.sh
 COPY package_script.sh /build/
 RUN chmod +x /build/package_script.sh
 RUN ./package_script.sh
-EOF
+DOCKERFILE
 
         # 創建編譯腳本
-        cat > build_script.sh << 'EOF'
+        cat > build_script.sh << 'BUILDSCRIPT'
 #!/bin/bash
 set -e
 
@@ -149,10 +149,10 @@ if [ ! -f /build/SUCCESS_VERSION ]; then
 fi
 
 echo "✅ Successfully built Coccinelle $(cat /build/SUCCESS_VERSION)"
-EOF
+BUILDSCRIPT
 
         # 創建打包腳本
-        cat > package_script.sh << 'EOF'
+        cat > package_script.sh << 'PACKAGESCRIPT'
 #!/bin/bash
 set -e
 
@@ -219,41 +219,6 @@ chmod +x portable-coccinelle/bin/spatch
 # 創建直接可執行的 spatch
 cp portable-coccinelle/spatch.sh portable-coccinelle/spatch
 
-# 創建 README
-FINAL_VERSION=$($SPATCH_PATH --version | head -1)
-cat > portable-coccinelle/README.md << README
-# Portable Coccinelle $SUCCESS_VERSION
-
-## Version Information
-$FINAL_VERSION
-Built from source on Ubuntu 16.04 for GLIBC 2.23+ compatibility
-
-## Usage
-\`\`\`bash
-# Method 1: Using launcher script
-./spatch.sh --version
-
-# Method 2: Direct execution
-./spatch --version
-
-# Method 3: Install to PATH
-export PATH=\$PWD:\$PATH
-spatch --version
-\`\`\`
-
-## Installation
-\`\`\`bash
-tar -xzf coccinelle-${SUCCESS_VERSION}-portable.tar.gz
-cd portable-coccinelle
-./spatch --version
-\`\`\`
-
-## Compatibility
-- Target: Ubuntu 16.04+ (GLIBC 2.23+)
-- Built with: Python 3 support
-- OCaml runtime included
-README
-
 # 測試可攜式版本
 echo "Testing portable version..."
 ./portable-coccinelle/spatch.sh --version
@@ -267,8 +232,7 @@ tar -czf "coccinelle-${SUCCESS_VERSION}-portable.tar.gz" portable-coccinelle/
 
 echo "✅ Package created: coccinelle-${SUCCESS_VERSION}-portable.tar.gz"
 echo "Package size: $(du -h coccinelle-${SUCCESS_VERSION}-portable.tar.gz | cut -f1)"
-echo "Contains: $(ls -la portable-coccinelle/bin/)"
-EOF
+PACKAGESCRIPT
 
         # 建置 Docker 鏡像並運行
         echo "Building Docker image..."
@@ -299,16 +263,21 @@ EOF
                 RELEASE_TAG="coccinelle-${SUCCESS_VERSION}-$(date +%Y%m%d-%H%M%S)"
                 RELEASE_NAME="Coccinelle ${SUCCESS_VERSION} (GLIBC 2.23 Compatible)"
                 
-                cat > payload.json << JSON
+                cat > payload.json << 'JSONPAYLOAD'
 {
-  "tag_name": "$RELEASE_TAG",
-  "target_commitish": "main",
-  "name": "$RELEASE_NAME",
-  "body": "# Coccinelle $SUCCESS_VERSION Portable Package\\n\\nBuilt from source for Ubuntu 16.04+ (GLIBC 2.23+ compatible)\\n\\n## Features\\n- Version: $SUCCESS_VERSION\\n- Python 3 support\\n- OCaml runtime included\\n- Pre-compiled binary\\n\\n## Usage\\n\`\`\`bash\\ntar -xzf $PACKAGE_FILE\\ncd portable-coccinelle\\n./spatch --version\\n\`\`\`",
+  "tag_name": "REPLACE_TAG",
+  "target_commitish": "main", 
+  "name": "REPLACE_NAME",
+  "body": "REPLACE_BODY",
   "draft": false,
   "prerelease": false
 }
-JSON
+JSONPAYLOAD
+                
+                # 替換佔位符
+                sed -i "s/REPLACE_TAG/$RELEASE_TAG/" payload.json
+                sed -i "s/REPLACE_NAME/$RELEASE_NAME/" payload.json
+                sed -i "s/REPLACE_BODY/Coccinelle $SUCCESS_VERSION Portable Package/" payload.json
                 
                 RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
                   -H "Authorization: token $GITHUB_TOKEN" \
