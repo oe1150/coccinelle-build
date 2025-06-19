@@ -33,7 +33,7 @@ jobs:
         
         echo "📦 Installing build dependencies..."
         apt-get update
-        apt-get install -y build-essential ocaml ocaml-native-compilers ocaml-findlib camlp4 libpcre3-dev pkg-config autoconf automake libtool m4 wget curl python-dev python3-dev || true
+        apt-get install -y build-essential ocaml ocaml-native-compilers ocaml-findlib camlp4 libpcre3-dev pkg-config autoconf automake libtool m4 wget curl python-dev python3-dev tcsh csh || true
         
         echo "📥 Downloading Coccinelle 1.0.8..."
         cd /tmp
@@ -44,84 +44,104 @@ jobs:
         echo "🔧 Preparing Python stub files..."
         mkdir -p python
         
-        echo "Creating no_pycocci.mli..."
+        echo "Creating comprehensive Python stubs..."
+        
+        # 创建 no_pycocci.mli
         cat > python/no_pycocci.mli << 'ENDMLI'
-        val python_support : bool
-        val initialised : bool ref
-        val exited : bool ref
-        exception Pycocciexception
-        val py_finalize : unit -> unit
-        val py_isinitialized : unit -> bool
-        val flush_stdout_and_stderr : unit -> unit
-        val run_constraint : 'a -> bool
-        val inc_match : unit -> unit
-        val run : string -> unit
-        val pyrun_simplestring : string -> unit
-        val retrieve_script_variables : unit -> 'a list
-        val set_coccifile : string -> unit
-        val unpickle_variable : string -> 'a
-        val pickle_variable : 'a -> string
-        val construct_script_variables : 'a list -> unit
-        val construct_variables : string list -> unit
-        val build_classes : 'a list -> unit
-        ENDMLI
+val python_support : bool
+val initialised : bool ref  
+val exited : bool ref
+exception Pycocciexception
+val py_finalize : unit -> unit
+val py_isinitialized : unit -> bool
+val flush_stdout_and_stderr : unit -> unit
+val run_constraint : 'a -> bool
+val inc_match : unit -> unit
+val run : string -> unit
+val pyrun_simplestring : string -> unit
+val retrieve_script_variables : unit -> 'a list
+val set_coccifile : string -> unit
+val unpickle_variable : string -> 'a
+val pickle_variable : 'a -> string
+val construct_script_variables : 'a list -> unit
+val construct_variables : string list -> unit
+val build_classes : 'a list -> unit
+ENDMLI
+
+        # 创建 no_pycocci.ml
+        cat > python/no_pycocci.ml << 'ENDML'  
+let python_support = false
+let initialised = ref false
+let exited = ref false
+exception Pycocciexception
+let py_finalize () = ()
+let py_isinitialized () = false
+let flush_stdout_and_stderr () = ()
+let run_constraint _ = false
+let inc_match () = ()
+let run _ = ()
+let pyrun_simplestring _ = ()
+let retrieve_script_variables () = []
+let set_coccifile _ = ()
+let unpickle_variable _ = failwith "Python support disabled"
+let pickle_variable _ = failwith "Python support disabled"
+let construct_script_variables _ = ()
+let construct_variables _ = ()
+let build_classes _ = ()
+ENDML
+
+        # 创建 pycocci.mli (可能被某些版本需要)
+        cp python/no_pycocci.mli python/pycocci.mli
+        cp python/no_pycocci.ml python/pycocci.ml
         
-        echo "Creating no_pycocci.ml..."
-        cat > python/no_pycocci.ml << 'ENDML'
-        let python_support = false
-        let initialised = ref false
-        let exited = ref false
-        exception Pycocciexception
-        let py_finalize () = ()
-        let py_isinitialized () = false
-        let flush_stdout_and_stderr () = ()
-        let run_constraint _ = false
-        let inc_match () = ()
-        let run _ = ()
-        let pyrun_simplestring _ = ()
-        let retrieve_script_variables () = []
-        let set_coccifile _ = ()
-        let unpickle_variable _ = failwith "Python support disabled"
-        let pickle_variable _ = failwith "Python support disabled"
-        let construct_script_variables _ = ()
-        let construct_variables _ = ()
-        let build_classes _ = ()
-        ENDML
-        
-        if [ ! -f python/pycocci_aux.mli ]; then
-            echo "Creating pycocci_aux.mli..."
-            cat > python/pycocci_aux.mli << 'ENDAUXMLI'
-        val check_return_value : 'a -> unit
-        val convert_list : ('a -> 'b) -> 'a list -> 'b
-        val pystring_fromstring : string -> 'a
-        val pystring_asstring : 'a -> string
-        ENDAUXMLI
-        fi
-        
-        if [ ! -f python/pycocci_aux.ml ]; then
-            echo "Creating pycocci_aux.ml..."
-            cat > python/pycocci_aux.ml << 'ENDAUXML'
-        let check_return_value _ = ()
-        let convert_list _ _ = failwith "Python disabled"
-        let pystring_fromstring _ = failwith "Python disabled"
-        let pystring_asstring _ = failwith "Python disabled"
-        ENDAUXML
-        fi
-        
-        if [ ! -f python/Makefile ]; then
-            echo "Creating python/Makefile..."
-            cat > python/Makefile << 'ENDMAKE'
-        all:
-        	@echo "Python support disabled"
-        clean:
-        	@echo "Python support disabled"
-        install:
-        	@echo "Python support disabled"
-        .PHONY: all clean install
-        ENDMAKE
-        fi
-        
-        touch python/.depend
+        # 创建 pycocci_aux 文件
+        cat > python/pycocci_aux.mli << 'ENDAUXMLI'
+val check_return_value : 'a -> unit
+val convert_list : ('a -> 'b) -> 'a list -> 'b  
+val pystring_fromstring : string -> 'a
+val pystring_asstring : 'a -> string
+ENDAUXMLI
+
+        cat > python/pycocci_aux.ml << 'ENDAUXML'
+let check_return_value _ = ()
+let convert_list _ _ = failwith "Python disabled"
+let pystring_fromstring _ = failwith "Python disabled" 
+let pystring_asstring _ = failwith "Python disabled"
+ENDAUXML
+
+        # 创建空的 Makefile
+        cat > python/Makefile << 'ENDMAKE'
+SOURCES = no_pycocci.ml pycocci.ml pycocci_aux.ml
+INTERFACES = no_pycocci.mli pycocci.mli pycocci_aux.mli
+
+all: $(SOURCES:.ml=.cmo) $(INTERFACES:.mli=.cmi)
+
+%.cmi: %.mli
+	@echo "Compiling interface $<"
+	ocamlc -c $<
+
+%.cmo: %.ml %.cmi
+	@echo "Compiling implementation $<"  
+	ocamlc -c $<
+
+clean:
+	rm -f *.cmi *.cmo *.cmx *.o
+
+install:
+	@echo "Python support disabled"
+
+.PHONY: all clean install
+ENDMAKE
+
+        # 创建依赖文件
+        cat > python/.depend << 'ENDDEP'
+no_pycocci.cmi: no_pycocci.mli
+no_pycocci.cmo: no_pycocci.ml no_pycocci.cmi
+pycocci.cmi: pycocci.mli  
+pycocci.cmo: pycocci.ml pycocci.cmi
+pycocci_aux.cmi: pycocci_aux.mli
+pycocci_aux.cmo: pycocci_aux.ml pycocci_aux.cmi
+ENDDEP
         
         echo "🔧 Configuring build..."
         if [ -f autogen ]; then
@@ -253,6 +273,7 @@ jobs:
         else
             echo "⚠️ Standard install failed, trying manual install..."
             mkdir -p /opt/coccinelle/bin
+            mkdir -p /opt/coccinelle/share/coccinelle
             
             SPATCH_FOUND=false
             for spatch_name in spatch spatch.byte spatch.opt main.byte main.opt; do
@@ -277,6 +298,34 @@ jobs:
             if [ "$SPATCH_FOUND" = "false" ]; then
                 echo "❌ Cannot find any spatch binary!"
                 exit 1
+            fi
+        fi
+        
+        # 检查spatch是否为脚本，如果是则确保使用正确的解释器
+        echo "🔧 Checking spatch binary type..."
+        if [ -f /opt/coccinelle/bin/spatch ]; then
+            file /opt/coccinelle/bin/spatch
+            
+            # 如果是tcsh脚本，创建bash包装器
+            if head -1 /opt/coccinelle/bin/spatch | grep -q tcsh; then
+                echo "Detected tcsh script, creating bash wrapper..."
+                mv /opt/coccinelle/bin/spatch /opt/coccinelle/bin/spatch.tcsh
+                cat > /opt/coccinelle/bin/spatch << 'WRAPPEREOF'
+#!/bin/bash
+# Bash wrapper for spatch tcsh script
+SCRIPT_DIR="$(dirname "$0")"
+export PATH="/bin:/usr/bin:$PATH"
+if command -v tcsh >/dev/null 2>&1; then
+    exec tcsh "$SCRIPT_DIR/spatch.tcsh" "$@"
+elif command -v csh >/dev/null 2>&1; then
+    exec csh "$SCRIPT_DIR/spatch.tcsh" "$@"
+else
+    echo "Error: tcsh or csh is required to run spatch" >&2
+    exit 1
+fi
+WRAPPEREOF
+                chmod +x /opt/coccinelle/bin/spatch
+                echo "Created bash wrapper for tcsh script"
             fi
         fi
         
@@ -338,15 +387,56 @@ jobs:
             
             echo "🧪 Testing GLIBC compatibility with Ubuntu 16..."
             docker run --rm -v $(pwd)/test_extract:/test ubuntu:16.04 bash -c "
+              # Install tcsh which is needed by spatch
+              apt-get update && apt-get install -y tcsh csh
+              
               echo 'Ubuntu 16.04 GLIBC version:'
               ldd --version
               echo 'Testing spatch binary:'
-              if /test/coccinelle/bin/spatch --version; then
+              
+              # Check if it's a script or binary
+              file /test/coccinelle/bin/spatch
+              
+              # Check shebang if it's a script
+              head -1 /test/coccinelle/bin/spatch
+              
+              # Try to run it
+              if /test/coccinelle/bin/spatch --version 2>&1; then
                 echo '✅ SUCCESS: Binary works on Ubuntu 16.04!'
+              elif /test/coccinelle/bin/spatch -version 2>&1; then
+                echo '✅ SUCCESS: Binary works with -version flag!'
               else
-                echo '❌ FAILED: Binary incompatible with Ubuntu 16.04'
-                ldd /test/coccinelle/bin/spatch || echo 'Static binary'
-                exit 1
+                echo '❌ Testing with alternative methods...'
+                echo 'Binary type:'
+                file /test/coccinelle/bin/spatch
+                echo 'Dependencies:'
+                ldd /test/coccinelle/bin/spatch 2>&1 || echo 'Static or script'
+                echo 'First few lines:'
+                head -5 /test/coccinelle/bin/spatch
+                
+                # If it's a script, try to fix the shebang
+                if head -1 /test/coccinelle/bin/spatch | grep -q tcsh; then
+                  echo 'Detected tcsh script, creating bash wrapper...'
+                  mv /test/coccinelle/bin/spatch /test/coccinelle/bin/spatch.tcsh
+                  cat > /test/coccinelle/bin/spatch << 'WRAPPER'
+#!/bin/bash
+# Wrapper for spatch tcsh script
+export PATH=\"/bin:/usr/bin:\$PATH\"
+exec tcsh /test/coccinelle/bin/spatch.tcsh \"\$@\"
+WRAPPER
+                  chmod +x /test/coccinelle/bin/spatch
+                  
+                  # Test the wrapper
+                  if /test/coccinelle/bin/spatch --version; then
+                    echo '✅ SUCCESS: Wrapper works!'
+                  else
+                    echo '❌ Wrapper also failed'
+                    exit 1
+                  fi
+                else
+                  echo '❌ FAILED: Binary incompatible with Ubuntu 16.04'
+                  exit 1
+                fi
               fi
             "
             
