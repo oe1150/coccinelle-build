@@ -37,8 +37,8 @@ jobs:
         rm -rf python/
         mkdir -p python
         
-        # Create empty Python stub files
-        cat > python/pycocci.ml << 'PYML_EOF'
+        # Create the template file that configure expects
+        cat > python/pycocci.ml.in << 'PYML_IN_EOF'
         (* Stub implementation - Python support disabled *)
         let python_support = false
         let initialised = ref false
@@ -60,8 +60,9 @@ jobs:
         let construct_script_variables _ = failwith "Python disabled"
         let construct_variables _ = failwith "Python disabled"
         let build_classes _ = failwith "Python disabled"
-        PYML_EOF
+        PYML_IN_EOF
         
+        # Create the interface file
         cat > python/pycocci.mli << 'PYMLI_EOF'
         (* Interface for disabled Python support *)
         val python_support : bool
@@ -85,6 +86,10 @@ jobs:
         val construct_variables : 'a -> 'b
         val build_classes : 'a -> 'b
         PYMLI_EOF
+        
+        # Also create any other Python files that might be expected
+        touch python/Makefile.in
+        touch python/.depend
         
         # Modify configure to ensure Python is truly disabled
         if [ -f configure.ac ]; then
