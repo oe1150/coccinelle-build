@@ -30,68 +30,127 @@ jobs:
         tar -xzf 1.0.7.tar.gz
         cd coccinelle-1.0.7
         
-        # Fix Python binding issue
-        echo "Fixing Python binding compilation issue..."
+        # COMPLETELY REMOVE Python support to avoid compilation issues
+        echo "Completely removing Python support..."
         
-        # Create missing Python interface files
+        # Remove Python directory entirely
+        rm -rf python/
         mkdir -p python
-        touch python/no_pycocci.mli
-        touch python/no_pycocci.ml
         
-        # Alternative: modify Makefile to skip Python completely
-        if [ -f Makefile.in ]; then
-            sed -i 's/python\/no_pycocci\.mli//g' Makefile.in
-            sed -i 's/python\/no_pycocci\.cmi//g' Makefile.in
+        # Create empty Python stub files
+        cat > python/pycocci.ml << 'PYML_EOF'
+        (* Stub implementation - Python support disabled *)
+        let python_support = false
+        let initialised = ref false
+        let exited = ref false
+        
+        exception Pycocciexception
+        
+        let py_finalize () = ()
+        let py_isinitialized () = false
+        let flush_stdout_and_stderr () = ()
+        let run_constraint _ = false
+        let unpickle_variable _ = failwith "Python disabled"
+        let pickle_variable _ = failwith "Python disabled"
+        let set_coccifile _ = ()
+        let retrieve_script_variables _ = []
+        let inc_match _ = ()
+        let run _ _ _ = failwith "Python disabled"
+        let pyrun_simplestring _ = failwith "Python disabled"
+        let construct_script_variables _ = failwith "Python disabled"
+        let construct_variables _ = failwith "Python disabled"
+        let build_classes _ = failwith "Python disabled"
+        PYML_EOF
+        
+        cat > python/pycocci.mli << 'PYMLI_EOF'
+        (* Interface for disabled Python support *)
+        val python_support : bool
+        val initialised : bool ref
+        val exited : bool ref
+        
+        exception Pycocciexception
+        
+        val py_finalize : unit -> unit
+        val py_isinitialized : unit -> bool
+        val flush_stdout_and_stderr : unit -> unit
+        val run_constraint : 'a -> bool
+        val unpickle_variable : 'a -> 'b
+        val pickle_variable : 'a -> 'b
+        val set_coccifile : 'a -> unit
+        val retrieve_script_variables : 'a -> 'b list
+        val inc_match : 'a -> unit
+        val run : 'a -> 'b -> 'c -> 'd
+        val pyrun_simplestring : 'a -> 'b
+        val construct_script_variables : 'a -> 'b
+        val construct_variables : 'a -> 'b
+        val build_classes : 'a -> 'b
+        PYMLI_EOF
+        
+        # Modify configure to ensure Python is truly disabled
+        if [ -f configure.ac ]; then
+            sed -i 's/AC_SUBST(PYTHON_VERSION)/#AC_SUBST(PYTHON_VERSION)/' configure.ac
+            sed -i 's/AC_SUBST(PYTHON_INCLUDES)/#AC_SUBST(PYTHON_INCLUDES)/' configure.ac
         fi
         
-        # Configure and build
+        # Generate configure script
         ./autogen
         
-        # Try different configuration approaches
-        if ./configure --prefix=/opt/coccinelle --disable-pcre --disable-python --disable-opt; then
-            echo "Configuration 1 successful"
-        elif ./configure --prefix=/opt/coccinelle --disable-python; then
-            echo "Configuration 2 successful"  
-        elif ./configure --prefix=/opt/coccinelle; then
-            echo "Configuration 3 successful"
-        else
-            echo "All configurations failed"
-            exit 1
-        fi
+        # Configure with Python completely disabled
+        ./configure --prefix=/opt/coccinelle \
+                   --disable-python \
+                   --disable-pcre \
+                   --disable-opt \
+                   --without-python
         
-        # Build with error handling
+        # Build
+        echo "Building Coccinelle..."
         if make -j1; then
-            echo "Build successful"
+            echo "✅ Build successful!"
         else
-            echo "Build failed, trying clean build..."
+            echo "❌ Build failed, trying alternative approach..."
+            
+            # If build fails, try building only core components
             make clean
             
-            # Try building specific targets to avoid Python issues
-            if make spatch; then
-                echo "Spatch binary built successfully"
-                mkdir -p /opt/coccinelle/bin
+            # Build just the essential parts
+            make parsing_c/parsing_c.cma
+            make parsing_cocci/parsing_cocci.cma
+            make commons/commons.cma
+            make spatch
+            
+            echo "✅ Core build completed"
+        fi
+        
+        # Install
+        if make install; then
+            echo "✅ Installation successful"
+        else
+            echo "Manual installation..."
+            mkdir -p /opt/coccinelle/bin
+            
+            # Copy the spatch binary (try different names)
+            if [ -f spatch ]; then
                 cp spatch /opt/coccinelle/bin/
+            elif [ -f spatch.opt ]; then
+                cp spatch.opt /opt/coccinelle/bin/spatch
+            elif [ -f spatch.byte ]; then
+                cp spatch.byte /opt/coccinelle/bin/spatch
             else
-                echo "Even spatch build failed"
+                echo "❌ No spatch binary found"
                 exit 1
             fi
         fi
         
-        # Install if make install works, otherwise manual copy
-        if make install 2>/dev/null; then
-            echo "Installation successful"
-        else
-            echo "Manual installation..."
-            mkdir -p /opt/coccinelle/bin
-            cp spatch /opt/coccinelle/bin/ 2>/dev/null || cp spatch.opt /opt/coccinelle/bin/spatch 2>/dev/null || cp spatch.byte /opt/coccinelle/bin/spatch
-        fi
-        
-        # Test
+        # Test the binary
+        echo "Testing spatch..."
         /opt/coccinelle/bin/spatch --version
         
         # Package
         cd /opt
         tar -czf coccinelle-1.0.7-static.tar.gz coccinelle/
+        
+        echo "✅ Package created successfully!"
+        ls -la *.tar.gz
         EOF
         
         chmod +x build.sh
