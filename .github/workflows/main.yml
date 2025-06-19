@@ -19,32 +19,32 @@ jobs:
           mkdir -p output
 
           cat > Dockerfile <<'EOF'
-FROM debian:jessie
-RUN apt-get update && apt-get install -y \
-  build-essential \
-  ocaml \
-  ocaml-findlib \
-  ocaml-native-compilers \
-  libpcre3-dev \
-  pkg-config \
-  autoconf \
-  automake \
-  libtool \
-  m4 \
-  curl \
-  wget \
-  ca-certificates
+          FROM debian:jessie
+          RUN apt-get update && apt-get install -y \
+            build-essential \
+            ocaml \
+            ocaml-findlib \
+            ocaml-native-compilers \
+            libpcre3-dev \
+            pkg-config \
+            autoconf \
+            automake \
+            libtool \
+            m4 \
+            curl \
+            wget \
+            ca-certificates
 
-WORKDIR /src
-RUN wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz && \
-    tar -xzf 1.0.7.tar.gz && cd coccinelle-1.0.7 && \
-    ./autogen && \
-    ./configure --prefix=/opt/spatch --disable-python --disable-pcre CC="gcc -static" LDFLAGS="-static" && \
-    make -j1 && make install
+          WORKDIR /src
+          RUN wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz && \
+              tar -xzf 1.0.7.tar.gz && cd coccinelle-1.0.7 && \
+              ./autogen && \
+              ./configure --prefix=/opt/spatch --disable-python --disable-pcre CC="gcc -static" LDFLAGS="-static" && \
+              make -j1 && make install
 
-RUN cd /opt && \
-    tar -czf /src/spatch-1.0.7-static.tar.gz spatch
-EOF
+          RUN cd /opt && \
+              tar -czf /src/spatch-1.0.7-static.tar.gz spatch
+          EOF
 
           docker build -t spatch-builder .
           docker create --name extract spatch-builder
