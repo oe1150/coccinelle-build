@@ -61,26 +61,70 @@ jobs:
             fi
             
             echo "Configuring for GLIBC 2.23 compatibility..."
+            # 嘗試多種配置方案
+            CONFIGURED=false
+            
+            # 方案1：最小配置
+            echo "Trying minimal configuration..."
             if ./configure \
                 --prefix=/tmp/coccinelle-install \
                 --disable-opt \
                 --disable-pcre \
-                --enable-python \
-                --with-python=python3 \
+                --disable-python \
                 CC="gcc -m64" \
-                CFLAGS="-O2 -static-libgcc -fno-stack-protector" \
-                LDFLAGS="-static-libgcc -Wl,--no-as-needed"; then
+                CFLAGS="-O2 -static-libgcc" \
+                LDFLAGS="-static-libgcc"; then
+                echo "Minimal configuration successful"
+                CONFIGURED=true
+            fi
+            
+            # 方案2：如果最小配置失敗，嘗試標準配置
+            if [ "$CONFIGURED" = false ]; then
+                echo "Trying standard configuration..."
+                make distclean 2>/dev/null || true
+                if ./configure --prefix=/tmp/coccinelle-install --disable-opt; then
+                    echo "Standard configuration successful"
+                    CONFIGURED=true
+                fi
+            fi
+            
+            # 方案3：最後嘗試默認配置
+            if [ "$CONFIGURED" = false ]; then
+                echo "Trying default configuration..."
+                make distclean 2>/dev/null || true
+                if ./configure --prefix=/tmp/coccinelle-install; then
+                    echo "Default configuration successful"
+                    CONFIGURED=true
+                fi
+            fi
+            
+            if [ "$CONFIGURED" = true ]; then
                 
                 echo "Configure successful for $VERSION"
                 
                 echo "Building..."
-                if make -j$(nproc) 2>&1 | tee build.log; then
+                if make -j1 2>&1 | tee build.log; then
                     echo "Build successful for $VERSION"
                     
-                    if [ -f spatch ]; then
+                    # 檢查多個可能的可執行文件位置
+                    SPATCH_FOUND=""
+                    for spatch_path in "spatch" "spatch.opt" "spatch.byte" "main/spatch"; do
+                        if [ -f "$spatch_path" ]; then
+                            echo "Found spatch at: $spatch_path"
+                            SPATCH_FOUND="$spatch_path"
+                            break
+                        fi
+                    done
+                    
+                    if [ -n "$SPATCH_FOUND" ]; then
                         echo "Testing spatch..."
-                        if ./spatch --version; then
+                        if ./"$SPATCH_FOUND" --version; then
                             echo "spatch test successful"
+                            
+                            # 如果不是標準名稱，複製為 spatch
+                            if [ "$SPATCH_FOUND" != "spatch" ]; then
+                                cp "$SPATCH_FOUND" spatch
+                            fi
                             
                             make install
                             
@@ -92,14 +136,16 @@ jobs:
                             echo "spatch test failed"
                         fi
                     else
-                        echo "No spatch executable generated"
+                        echo "No spatch executable found"
+                        echo "Generated files:"
+                        find . -name "*spatch*" -type f | head -10
                         echo "Build log tail:"
-                        tail -20 build.log
+                        tail -30 build.log
                     fi
                 else
                     echo "Build failed for $VERSION"
                     echo "Build log tail:"
-                    tail -20 build.log
+                    tail -30 build.log
                 fi
             else
                 echo "Configure failed for $VERSION"
