@@ -1,195 +1,4 @@
-echo "Downloading pre-compiled Coccinelle 1.0.7+..."
-        echo "Target system GLIBC: 2.23 (Ubuntu 16.04 compatible)"
-        
-        cd /tmp
-        SPATCH_PATH=""
-        BUILT_VERSION=""
-        
-        # 策略1：從 Ubuntu 包倉庫下載預編譯的 deb 包
-        echo "========================================="
-        echo "Downloading pre-compiled packages..."
-        echo "========================================="
-        
-        # 嘗試不同版本的預編譯包
-        declare -A DEB_URLS=(
-            ["1.0.8"]="http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.8-1_amd64.deb"
-            ["1.0.7"]="http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.7-1_amd64.deb"
-            ["1.0.6"]="http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-2_amd64.deb"
-        )
-        
-        for version in "1.0.8" "1.0.7" "1.0.6"; do
-            echo "Trying to download Coccinelle $version..."
-            
-            # 嘗試多個可能的 URL
-            for url in \
-                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
-                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-2_amd64.deb" \
-                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1ubuntu1_amd64.deb" \
-                "http://security.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
-                "http://old-releases.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
-                ; do
-                
-                echo "  Trying: $url"
-                if wget -q --timeout=10 "$url"; then
-                    deb_file=$(basename "$url")
-                    echo "  ✅ Downloaded $deb_file ($(du -h $deb_file | cut -f1))"
-                    
-                    # 解壓 deb 包
-                    dpkg -x "$deb_file" /tmp/extracted_$version
-                    
-                    if [ -f "/tmp/extracted_$version/usr/bin/spatch" ]; then
-                        echo "  ✅ Found spatch binary in package"
-                        
-                        # 檢查是否與 GLIBC 2.23 兼容
-                        echo "  Testing compatibility..."
-                        
-                        # 複製到測試位置
-                        cp /tmp/extracted_$version/usr/bin/spatch /tmp/test_spatch
-                        chmod +x /tmp/test_spatch
-                        
-                        # 檢查依賴
-                        echo "  Dependencies:"
-                        ldd /tmp/test_spatch | head -5 || echo "    Static binary or ldd failed"
-                        
-                        # 測試執行
-                        if /tmp/test_spatch --version 2>/dev/null; then
-                            echo "  ✅ spatch works! Version:"
-                            /tmp/test_spatch --version | head -1
-                            
-                            # 安裝成功的版本
-                            echo "  Installing Coccinelle $version..."
-                            cp /tmp/extracted_$version/usr/bin/spatch /usr/local/bin/
-                            
-                            # 複製庫文件
-                            if [ -d "/tmp/extracted_$version/usr/lib/coccinelle" ]; then
-                                cp -r /tmp/extracted_$version/usr/lib/coccinelle /usr/local/lib/
-                                echo "  ✅ Copied library files"
-                            fi
-                            
-                            # 複製配置文件
-                            if [ -d "/tmp/extracted_$version/usr/share/coccinelle" ]; then
-                                cp -r /tmp/extracted_$version/usr/share/coccinelle /usr/local/share/
-                                echo "  ✅ Copied configuration files"
-                            fi
-                            
-                            # 複製 Python 模組
-                            if [ -d "/tmp/extracted_$version/usr/lib/python"* ]; then
-                                mkdir -p /usr/local/lib/python-coccinelle
-                                cp -r /tmp/extracted_$version/usr/lib/python* /usr/local/lib/python-coccinelle/ 2>/dev/null || true
-                                echo "  ✅ Copied Python modules"
-                            fi
-                            
-                            SPATCH_PATH="/usr/local/bin/spatch"
-                            BUILT_VERSION="precompiled-$version"
-                            break 2
-                        else
-                            echo "  ❌ spatch not compatible with GLIBC 2.23"
-                            rm -f /tmp/test_spatch
-                        fi
-                    else
-                        echo "  ❌ No spatch binary found in package"
-                    fi
-                    
-                    rm -f "$deb_file"
-                    rm -rf "/tmp/extracted_$version"
-                else
-                    echo "  ❌ Download failed"
-                fi
-            done
-            
-            # 如果找到兼容版本，停止搜索
-            if [ -n "$SPATCH_PATH" ]; then
-                break
-            fi
-        done
-        
-        # 策略2：從 Debian 下載預編譯包
-        if [ -z "$SPATCH_PATH" ]; then
-            echo "========================================="
-            echo "Trying Debian pre-compiled packages..."
-            echo "========================================="
-            
-            for version in "1.0.8" "1.0.7"; do
-                echo "Trying Debian Coccinelle $version..."
-                
-                for url in \
-                    "http://deb.debian.org/debian/pool/main/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
-                    "http://security.debian.org/debian-security/pool/updates/main/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
-                    ; do
-                    
-                    echo "  Trying: $url"
-                    if wget -q --timeout=10 "$url"; then
-                        deb_file=$(basename "$url")
-                        echo "  ✅ Downloaded Debian package"
-                        
-                        dpkg -x "$deb_file" /tmp/debian_extracted
-                        
-                        if [ -f "/tmp/debian_extracted/usr/bin/spatch" ]; then
-                            cp /tmp/debian_extracted/usr/bin/spatch /tmp/test_spatch_debian
-                            chmod +x /tmp/test_spatch_debian
-                            
-                            if /tmp/test_spatch_debian --version 2>/dev/null; then
-                                echo "  ✅ Debian spatch works!"
-                                /tmp/test_spatch_debian --version | head -1
-                                
-                                # 安裝
-                                cp /tmp/debian_extracted/usr/bin/spatch /usr/local/bin/
-                                cp -r /tmp/debian_extracted/usr/lib/coccinelle /usr/local/lib/ 2>/dev/null || true
-                                cp -r /tmp/debian_extracted/usr/share/coccinelle /usr/local/share/ 2>/dev/null || true
-                                
-                                SPATCH_PATH="/usr/local/bin/spatch"
-                                BUILT_VERSION="debian-precompiled-$version"
-                                break 2
-                            fi
-                        fi
-                        
-                        rm -f "$deb_file"
-                        rm -rf /tmp/debian_extracted
-                    fi
-                done
-            done
-        fi
-        
-        # 策略3：從 GitHub Releases 查找預編譯版本（如果有）
-        if [ -z "$SPATCH_PATH" ]; then
-            echo "========================================="
-            echo "Checking GitHub releases for binaries..."
-            echo "========================================="
-            
-            # 有些項目會在 releases 中提供預編譯版本
-            echo "Note: Coccinelle typically doesn't provide pre-compiled binaries in releases"
-            echo "Skipping GitHub binary search..."
-        fi
-        
-        # 最後手段：使用系統包
-        if [ -z "$SPATCH_PATH" ]; then
-            echo "========================================="
-            echo "Using system package (fallback)..."
-            echo "========================================="
-            apt-get install -y -qq coccinelle
-            if [ -x "/usr/bin/spatch" ]; then
-                SPATCH_PATH="/usr/bin/spatch"
-                BUILT_VERSION="system-package"
-                echo "✅ Installed system package"
-            fi
-        fi
-        
-        # 檢查最終結果
-        echo "========================================="
-        echo "FINAL RESULT:"
-        echo "========================================="
-        if [ -x "$SPATCH_PATH" ]; then
-            echo "✅ Success! spatch installed at: $SPATCH_PATH"
-            echo "Version:"
-            $SPATCH_PATH --version
-            echo "Method: $BUILT_VERSION"
-            echo "File size: $(du -h $SPATCH_PATH | cut -f1)"
-            echo "Dependencies:"
-            ldd $SPATCH_PATH | head -10 || echo "No dynamic dependencies"
-        else
-            echo "❌ Failed to install any version of spatch"
-            exit 1
-        finame: Build and Release Coccinelle
+name: Build and Release Coccinelle (Pre-compiled)
 
 on:
   workflow_dispatch:
@@ -203,310 +12,134 @@ jobs:
     container: ubuntu:16.04
     
     steps:
-    - name: Build Coccinelle package
+    - name: Download pre-compiled Coccinelle
       run: |
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
+        apt-get install -y -qq tar curl ca-certificates wget
         
-        # 安裝編譯依賴 - 在 Ubuntu 16.04 環境中編譯以確保兼容性
-        apt-get install -y -qq \
-            build-essential \
-            ocaml \
-            ocaml-native-compilers \
-            ocaml-findlib \
-            libpcre3-dev \
-            pkg-config \
-            python3-dev \
-            python3-setuptools \
-            tar curl ca-certificates wget git \
-            autoconf automake \
-            libtool \
-            m4 \
-            software-properties-common || echo "Some packages not available"
-        
-        # 嘗試安裝更新的 OCaml 版本（如果可能）
-        add-apt-repository -y ppa:avsm/ppa || echo "PPA not available"
-        apt-get update -qq || echo "Update failed"
-        apt-get install -y -qq ocaml ocaml-findlib || echo "Updated OCaml not available"
-        
+        echo "Downloading pre-compiled Coccinelle 1.0.7+..."
         echo "Target system GLIBC: 2.23 (Ubuntu 16.04 compatible)"
-        echo "Building Coccinelle 1.0.7+ with compatibility focus..."
         
         cd /tmp
+        SPATCH_PATH=""
+        BUILT_VERSION=""
         
-        # 專門針對 1.0.7 和 1.0.8，跳過 1.0.6
-        for VERSION in "1.0.8" "1.0.7"; do
-            echo "========================================="
-            echo "Attempting Coccinelle $VERSION..."
-            echo "========================================="
-            
-            rm -rf coccinelle-*
-            wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
-            tar -xzf $VERSION.tar.gz
-            cd coccinelle-$VERSION
-            
-            # 檢查 OCaml 版本
-            echo "OCaml version: $(ocaml -version)"
-            echo "Available OCaml packages:"
-            ocamlfind list | head -10
-            
-            # 檢查文件結構
-            echo "Source structure:"
-            ls -la | head -10
-            
-            # 生成配置文件
-            echo "Running autogen..."
-            if [ -f autogen ]; then
-                ./autogen
-            elif [ -f autogen.sh ]; then
-                ./autogen.sh
-            else
-                echo "Running autoreconf..."
-                autoreconf -fiv
-            fi
-            
-            # 多種配置嘗試
-            CONFIG_SUCCESS=false
-            
-            # 嘗試1：最小配置
-            echo "Trying minimal configuration..."
-            if ./configure --prefix=/usr/local --disable-opt --disable-pcre --disable-python --enable-release; then
-                CONFIG_SUCCESS=true
-                echo "✅ Minimal config successful"
-            fi
-            
-            # 嘗試2：標準配置
-            if [ "$CONFIG_SUCCESS" = false ]; then
-                echo "Trying standard configuration..."
-                if ./configure --prefix=/usr/local --disable-opt; then
-                    CONFIG_SUCCESS=true
-                    echo "✅ Standard config successful"
-                fi
-            fi
-            
-            # 如果配置失敗，跳到下個版本
-            if [ "$CONFIG_SUCCESS" = false ]; then
-                echo "❌ Configuration failed for $VERSION"
-                cd /tmp
-                continue
-            fi
-            
-            # 清理之前的編譯
-            make clean 2>/dev/null || true
-            
-            # 編譯嘗試
-            echo "Building $VERSION..."
-            BUILD_SUCCESS=false
-            
-            # 嘗試1：標準編譯
-            echo "Trying standard build..."
-            if make -j1; then
-                if [ -f spatch ] || [ -f spatch.opt ]; then
-                    BUILD_SUCCESS=true
-                    echo "✅ Standard build successful"
-                    # 檢查生成的文件
-                    ls -la spatch* || true
-                    file spatch* || true
-                fi
-            fi
-            
-            # 嘗試2：只編譯字節碼版本
-            if [ "$BUILD_SUCCESS" = false ]; then
-                echo "Trying bytecode build..."
-                make clean || true
-                if make spatch.byte -j1; then
-                    if [ -f spatch.byte ]; then
-                        mv spatch.byte spatch
-                        BUILD_SUCCESS=true
-                        echo "✅ Bytecode build successful"
-                    fi
-                fi
-            fi
-            
-            # 檢查編譯結果
-            if [ "$BUILD_SUCCESS" = true ]; then
-                echo "✅ Build successful for $VERSION!"
-                
-                # 檢查可執行文件
-                if [ -f spatch ]; then
-                    echo "spatch file found:"
-                    ls -la spatch
-                    file spatch
-                    
-                    # 測試執行
-                    echo "Testing execution..."
-                    if ./spatch --version; then
-                        echo "✅ Execution test passed"
-                        
-                        # 安裝
-                        make install
-                        SPATCH_PATH="/usr/local/bin/spatch"
-                        BUILT_VERSION="$VERSION"
-                        
-                        # 最終驗證
-                        echo "Final verification:"
-                        ls -la /usr/local/bin/spatch
-                        /usr/local/bin/spatch --version
-                        break
-                    else
-                        echo "❌ Execution test failed"
-                    fi
-                else
-                    echo "❌ No spatch executable found after build"
-                    ls -la . | grep spatch || echo "No spatch files"
-                fi
-            else
-                echo "❌ Build failed for $VERSION"
-            fi
-            
-            cd /tmp
-        done
+        echo "========================================="
+        echo "Downloading pre-compiled packages..."
+        echo "========================================="
         
-        # 如果 1.0.7+ 都失敗，嘗試從 Ubuntu 18.04 的 deb 包獲取較新版本
-        if [ ! -x "$SPATCH_PATH" ]; then
-            echo "========================================="
-            echo "Source builds failed, trying deb packages..."
-            echo "========================================="
+        # 嘗試不同版本的預編譯包
+        for version in "1.0.8" "1.0.7" "1.0.6"; do
+            echo "Trying to download Coccinelle $version..."
             
-            cd /tmp
-            
-            # 嘗試從 Ubuntu 18.04/20.04 獲取較新的 deb 包
-            for deb_url in \
-                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-2_amd64.deb" \
-                "http://old-releases.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_1.0.6-1_amd64.deb"; do
+            # 嘗試多個可能的 URL
+            for url in \
+                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1_amd64.deb" \
+                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-2_amd64.deb" \
+                "http://archive.ubuntu.com/ubuntu/pool/universe/c/coccinelle/coccinelle_${version}-1ubuntu1_amd64.deb" \
+                ; do
                 
-                echo "Trying $deb_url..."
-                if wget "$deb_url"; then
-                    deb_file=$(basename "$deb_url")
-                    dpkg -x "$deb_file" /tmp/coccinelle_extract
+                echo "  Trying: $url"
+                if wget -q --timeout=10 "$url"; then
+                    deb_file=$(basename "$url")
+                    echo "  Downloaded $deb_file"
                     
-                    if [ -f /tmp/coccinelle_extract/usr/bin/spatch ]; then
-                        echo "✅ Found spatch in deb package"
-                        cp /tmp/coccinelle_extract/usr/bin/spatch /usr/local/bin/
-                        cp -r /tmp/coccinelle_extract/usr/lib/coccinelle /usr/local/lib/ 2>/dev/null || true
-                        cp -r /tmp/coccinelle_extract/usr/share/coccinelle /usr/local/share/ 2>/dev/null || true
+                    # 解壓 deb 包
+                    dpkg -x "$deb_file" /tmp/extracted
+                    
+                    if [ -f "/tmp/extracted/usr/bin/spatch" ]; then
+                        echo "  Found spatch binary"
                         
-                        # 測試
-                        if /usr/local/bin/spatch --version; then
+                        # 測試兼容性
+                        cp /tmp/extracted/usr/bin/spatch /tmp/test_spatch
+                        chmod +x /tmp/test_spatch
+                        
+                        if /tmp/test_spatch --version 2>/dev/null; then
+                            echo "  spatch works! Version:"
+                            /tmp/test_spatch --version | head -1
+                            
+                            # 安裝
+                            cp /tmp/extracted/usr/bin/spatch /usr/local/bin/
+                            cp -r /tmp/extracted/usr/lib/coccinelle /usr/local/lib/ 2>/dev/null || true
+                            cp -r /tmp/extracted/usr/share/coccinelle /usr/local/share/ 2>/dev/null || true
+                            
                             SPATCH_PATH="/usr/local/bin/spatch"
-                            BUILT_VERSION="deb-package"
-                            break
+                            BUILT_VERSION="precompiled-$version"
+                            break 2
+                        else
+                            echo "  spatch not compatible"
                         fi
                     fi
+                    
+                    rm -f "$deb_file"
+                    rm -rf /tmp/extracted
                 fi
             done
-        fi
+        done
         
-        # 最後手段：系統包
-        if [ ! -x "$SPATCH_PATH" ]; then
-            echo "All methods failed, using system package..."
+        # 如果沒有找到兼容版本，使用系統包
+        if [ -z "$SPATCH_PATH" ]; then
+            echo "Using system package..."
             apt-get install -y -qq coccinelle
             SPATCH_PATH="/usr/bin/spatch"
-            BUILT_VERSION="system"
+            BUILT_VERSION="system-package"
         fi
         
-        # 檢查最終結果
+        # 檢查結果
         echo "========================================="
-        echo "FINAL RESULT:"
+        echo "RESULT:"
         echo "========================================="
-        echo "spatch path: $SPATCH_PATH"
         if [ -x "$SPATCH_PATH" ]; then
-            echo "✅ spatch is executable"
+            echo "Success! spatch installed at: $SPATCH_PATH"
             $SPATCH_PATH --version
-            echo "Built version: $BUILT_VERSION"
-            
-            # 檢查二進制依賴
-            echo "Binary dependencies:"
-            ldd $SPATCH_PATH | head -10 || echo "Static binary or dependency check failed"
+            echo "Method: $BUILT_VERSION"
         else
-            echo "❌ No working spatch found"
+            echo "Failed to install spatch"
             exit 1
         fi
         
+        # 創建可攜式包
         echo "Creating portable package..."
         rm -rf portable-coccinelle
         mkdir -p portable-coccinelle/bin
-        mkdir -p portable-coccinelle/lib  
+        mkdir -p portable-coccinelle/lib
         mkdir -p portable-coccinelle/share
-        mkdir -p portable-coccinelle/usr-local
         
-        # 複製 spatch（使用找到的路徑）
+        # 複製文件
         cp "$SPATCH_PATH" portable-coccinelle/bin/
-        echo "Copied spatch from $SPATCH_PATH"
         
-        # 檢查實際版本
-        ACTUAL_VERSION=$(portable-coccinelle/bin/spatch --version 2>/dev/null | head -1 || echo "unknown")
-        echo "Package will contain: $ACTUAL_VERSION"
-        
-        # 複製相關庫文件（根據實際安裝位置）
-        echo "Copying libraries..."
+        # 複製庫文件
         for lib_dir in /usr/local/lib/coccinelle /usr/lib/coccinelle; do
             if [ -d "$lib_dir" ]; then
-                cp -r "$lib_dir" portable-coccinelle/usr-local/
-                echo "Copied from $lib_dir"
+                cp -r "$lib_dir" portable-coccinelle/lib/
+                break
+            fi
+        done
+        
+        # 複製配置文件
+        for share_dir in /usr/local/share/coccinelle /usr/share/coccinelle; do
+            if [ -d "$share_dir" ]; then
+                cp -r "$share_dir" portable-coccinelle/share/
                 break
             fi
         done
         
         # 複製 OCaml 庫
-        echo "Copying OCaml libraries..."
-        for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml /usr/local/lib/ocaml; do
+        for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
             if [ -d "$ocaml_dir" ]; then
-                mkdir -p portable-coccinelle/lib/$(basename $ocaml_dir)
-                cp -r "$ocaml_dir"/* portable-coccinelle/lib/$(basename $ocaml_dir)/ 2>/dev/null || true
-                echo "Copied OCaml from $ocaml_dir"
-            fi
-        done
-        
-        # 複製 share 文件
-        echo "Copying share files..."
-        for share_dir in /usr/local/share/coccinelle /usr/share/coccinelle; do
-            if [ -d "$share_dir" ]; then
-                cp -r "$share_dir" portable-coccinelle/share/
-                echo "Copied from $share_dir"
+                mkdir -p portable-coccinelle/lib/ocaml
+                cp -r "$ocaml_dir"/* portable-coccinelle/lib/ocaml/ 2>/dev/null || true
                 break
             fi
         done
         
-        # 複製 Python 模組
-        for python_dir in /usr/local/lib/python*/site-packages/coccinelle /usr/lib/python*/dist-packages/coccinelle; do
-            if [ -d "$python_dir" ]; then
-                mkdir -p portable-coccinelle/python
-                cp -r "$python_dir" portable-coccinelle/python/ 2>/dev/null || true
-                echo "Copied Python modules from $python_dir"
-                break
-            fi
-        done
-        
-        # 檢查我們複製了什麼
-        echo "Checking copied files:"
-        find portable-coccinelle -name "*spatch*" -o -name "*.py" | head -10
-        
-        # 創建修復的 spatch 腳本
-        echo "Creating launcher scripts..."
-        echo '#!/bin/bash' > portable-coccinelle/bin/spatch.fixed
-        echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/bin/spatch.fixed
-        echo 'COCCINELLE_ROOT="$(dirname "$SCRIPT_DIR")"' >> portable-coccinelle/bin/spatch.fixed
-        echo '' >> portable-coccinelle/bin/spatch.fixed
-        echo '# 設置環境變數' >> portable-coccinelle/bin/spatch.fixed
-        echo 'export LD_LIBRARY_PATH="$COCCINELLE_ROOT/lib:$COCCINELLE_ROOT/lib/ocaml:$LD_LIBRARY_PATH"' >> portable-coccinelle/bin/spatch.fixed
-        echo 'export OCAML_TOPLEVEL_PATH="$COCCINELLE_ROOT/lib/ocaml"' >> portable-coccinelle/bin/spatch.fixed
-        echo 'export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$COCCINELLE_ROOT/python:$COCCINELLE_ROOT/usr-local/coccinelle/python"' >> portable-coccinelle/bin/spatch.fixed
-        echo '' >> portable-coccinelle/bin/spatch.fixed
-        echo '# 直接執行 spatch' >> portable-coccinelle/bin/spatch.fixed
-        echo 'exec "$SCRIPT_DIR/spatch" "$@"' >> portable-coccinelle/bin/spatch.fixed
-        
-        chmod +x portable-coccinelle/bin/spatch.fixed
-        
-        # 創建主啟動腳本
+        # 創建啟動腳本
         echo '#!/bin/bash' > portable-coccinelle/spatch.sh
         echo 'SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"' >> portable-coccinelle/spatch.sh
         echo 'export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"' >> portable-coccinelle/spatch.sh
         echo 'export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"' >> portable-coccinelle/spatch.sh
-        echo 'export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/python:$SCRIPT_DIR/usr-local/coccinelle/python"' >> portable-coccinelle/spatch.sh
-        echo '' >> portable-coccinelle/spatch.sh
-        echo '# 使用編譯的二進制文件' >> portable-coccinelle/spatch.sh
-        echo 'exec "$SCRIPT_DIR/bin/spatch" "$@"' >> portable-coccinelle/spatch.sh
+        echo '"$SCRIPT_DIR/bin/spatch" "$@"' >> portable-coccinelle/spatch.sh
         
         chmod +x portable-coccinelle/spatch.sh
         chmod +x portable-coccinelle/bin/spatch
@@ -516,128 +149,72 @@ jobs:
         ln -sf spatch.sh spatch
         cd ..
         
-        echo "Testing Coccinelle 1.0.7..."
-        ./portable-coccinelle/spatch --version || echo "Direct test failed, but package created"
-        
         # 創建 README
         FINAL_VERSION=$($SPATCH_PATH --version 2>/dev/null | head -1 || echo "Unknown")
-        echo "# Portable Coccinelle (Ubuntu 16.04 Compatible)" > portable-coccinelle/README.md
+        echo "# Portable Coccinelle (Pre-compiled)" > portable-coccinelle/README.md
         echo "" >> portable-coccinelle/README.md
         echo "Version: $FINAL_VERSION" >> portable-coccinelle/README.md
-        echo "Built version: $BUILT_VERSION" >> portable-coccinelle/README.md
-        echo "Target GLIBC: 2.23+ (Ubuntu 16.04+)" >> portable-coccinelle/README.md
-        echo "Built on: Ubuntu 16.04 for maximum compatibility" >> portable-coccinelle/README.md
-        echo "" >> portable-coccinelle/README.md
-        echo "## Binary Info" >> portable-coccinelle/README.md
-        ldd $SPATCH_PATH >> portable-coccinelle/README.md 2>/dev/null || echo "Static binary (no dependencies)" >> portable-coccinelle/README.md
+        echo "Method: $BUILT_VERSION" >> portable-coccinelle/README.md
+        echo "Target: GLIBC 2.23+ (Ubuntu 16.04+)" >> portable-coccinelle/README.md
         echo "" >> portable-coccinelle/README.md
         echo "## Usage" >> portable-coccinelle/README.md
         echo "./spatch.sh --version" >> portable-coccinelle/README.md
         echo "./spatch --version" >> portable-coccinelle/README.md
         
-        tar -czf coccinelle-compatible-portable.tar.gz portable-coccinelle/
-        echo "Package size: $(du -h coccinelle-compatible-portable.tar.gz | cut -f1)"
-        echo "Final version in package: $FINAL_VERSION"
-        echo "Built for GLIBC 2.23+ compatibility"
+        # 測試
+        echo "Testing portable version..."
+        ./portable-coccinelle/spatch.sh --version || echo "Test failed but package created"
         
-        chmod +x portable-coccinelle/spatch.sh
-        
-        echo "Package contents:"
-        find portable-coccinelle -type f | head -20
-        
-        echo "Testing portable spatch..."
-        ./portable-coccinelle/spatch.sh --version || echo "Test failed, but package created"
-        
-        tar -czf coccinelle-1.0.7-portable.tar.gz portable-coccinelle/
-        echo "Package size: $(du -h coccinelle-1.0.7-portable.tar.gz | cut -f1)"
+        # 打包
+        tar -czf coccinelle-precompiled.tar.gz portable-coccinelle/
+        echo "Package size: $(du -h coccinelle-precompiled.tar.gz | cut -f1)"
+        echo "Final version: $FINAL_VERSION"
 
     - name: Create Release
       run: |
-        RELEASE_TAG="coccinelle-$(date +%Y%m%d-%H%M%S)"
-        RELEASE_NAME="Coccinelle Portable $(date +%Y-%m-%d)"
+        RELEASE_TAG="coccinelle-precompiled-$(date +%Y%m%d-%H%M%S)"
+        RELEASE_NAME="Coccinelle Pre-compiled $(date +%Y-%m-%d)"
         
         echo "Creating release: $RELEASE_TAG"
-        echo "Repository: $GITHUB_REPOSITORY"
-        echo "Token length: ${#GITHUB_TOKEN}"
         
         echo "{" > payload.json
         echo "  \"tag_name\": \"$RELEASE_TAG\"," >> payload.json
         echo "  \"target_commitish\": \"main\"," >> payload.json
         echo "  \"name\": \"$RELEASE_NAME\"," >> payload.json
-        echo "  \"body\": \"Portable Coccinelle package built from Ubuntu 18.04. Extract and run ./spatch.sh --version\"," >> payload.json
+        echo "  \"body\": \"Pre-compiled Coccinelle package for Ubuntu 16.04+ (GLIBC 2.23+)\"," >> payload.json
         echo "  \"draft\": false," >> payload.json
         echo "  \"prerelease\": false" >> payload.json
         echo "}" >> payload.json
         
-        echo "JSON payload:"
-        cat payload.json
-        
         RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
           -H "Authorization: token $GITHUB_TOKEN" \
           -H "Content-Type: application/json" \
-          -H "Accept: application/vnd.github.v3+json" \
           "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
           -d @payload.json)
-        
-        echo "Release response:"
-        echo "$RELEASE_RESPONSE"
         
         HTTP_CODE=$(echo "$RELEASE_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
         RESPONSE_BODY=$(echo "$RELEASE_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
         
         if [ "$HTTP_CODE" = "201" ]; then
-          echo "Release created successfully!"
-          
           UPLOAD_URL=$(echo "$RESPONSE_BODY" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
           RELEASE_HTML_URL=$(echo "$RESPONSE_BODY" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
           
-          echo "Release created: $RELEASE_HTML_URL"
           echo "Uploading file..."
-          
-          UPLOAD_RESPONSE=$(curl -s -X POST \
+          curl -s -X POST \
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/gzip" \
-            --data-binary @coccinelle-portable.tar.gz \
-            "${UPLOAD_URL}?name=coccinelle-compatible-portable.tar.gz")
-          
-          DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
+            --data-binary @coccinelle-precompiled.tar.gz \
+            "${UPLOAD_URL}?name=coccinelle-precompiled.tar.gz"
           
           echo "========================================="
           echo "SUCCESS!"
           echo "========================================="
           echo "Release Page: $RELEASE_HTML_URL"
-          if [ -n "$DOWNLOAD_URL" ]; then
-            echo "Download URL: $DOWNLOAD_URL"
-          fi
           echo "Tag: $RELEASE_TAG"
           echo "========================================="
         else
-          echo "Failed to create release (HTTP $HTTP_CODE)"
-          
-          if [ "$HTTP_CODE" = "403" ]; then
-            echo ""
-            echo "ALTERNATIVE: Manual upload instructions"
-            echo "========================================="
-            echo "Since release creation failed, you can manually create one:"
-            echo "1. Go to: https://github.com/$GITHUB_REPOSITORY/releases/new"
-            echo "2. Tag: $RELEASE_TAG"
-            echo "3. Title: $RELEASE_NAME"
-            echo "4. Upload the file: coccinelle-compatible-portable.tar.gz ($(du -h coccinelle-compatible-portable.tar.gz | cut -f1))"
-            echo ""
-            echo "OR use file sharing services:"
-            echo "Trying alternative upload..."
-            
-            for service in "https://file.io" "https://0x0.st"; do
-              echo "Trying $service..."
-              UPLOAD_RESULT=$(curl -s --connect-timeout 10 -F "file=@coccinelle-compatible-portable.tar.gz" "$service" 2>/dev/null || echo "failed")
-              if echo "$UPLOAD_RESULT" | grep -q "http"; then
-                echo "SUCCESS: $UPLOAD_RESULT"
-                break
-              fi
-            done
-          fi
-          
-          exit 1
+          echo "Failed to create release"
+          echo "Response: $RESPONSE_BODY"
         fi
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
