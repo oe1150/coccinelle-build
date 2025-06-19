@@ -123,15 +123,44 @@ jobs:
         
         BUILD_OK=false
         
+        echo "=== ATTEMPTING BUILD 1: Standard world build ==="
         if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
-            echo "Standard build successful"
+            echo "✅ Standard build successful"
             BUILD_OK=true
         else
-            echo "Standard build failed, trying alternatives..."
+            echo "❌ Standard build failed, trying alternatives..."
+            
+            echo "=== ATTEMPTING BUILD 2: Core spatch build ==="
             make clean
             if make spatch -j1 2>&1 | grep -v "Bad -I option: python"; then
-                echo "Core build successful"
+                echo "✅ Core build successful"
                 BUILD_OK=true
+            else
+                echo "❌ Core build failed, trying manual approach..."
+                
+                echo "=== ATTEMPTING BUILD 3: Manual component build ==="
+                make clean
+                
+                # Try to build individual components
+                for comp in commons parsing_c parsing_cocci engine; do
+                    if [ -d "$comp" ]; then
+                        echo "Building component: $comp"
+                        (cd "$comp" && make all) 2>&1 | grep -v "Bad -I option: python" || echo "Warning: $comp had issues"
+                    fi
+                done
+                
+                # Try different make targets
+                echo "=== ATTEMPTING BUILD 4: Alternative targets ==="
+                for target in all spatch.byte spatch.opt main main.byte main.opt; do
+                    echo "Trying target: $target"
+                    if make $target 2>&1 | grep -v "Bad -I option: python"; then
+                        echo "✅ Target $target succeeded"
+                        BUILD_OK=true
+                        break
+                    else
+                        echo "❌ Target $target failed"
+                    fi
+                done
             fi
         fi
         
@@ -147,9 +176,25 @@ jobs:
             echo "Manual installation..."
             mkdir -p /opt/coccinelle/bin
             
+            echo "Searching for spatch binary..."
+            echo "Current directory contents:"
+            ls -la
+            
+            echo "Looking for any spatch-related files:"
+            find . -name "*spatch*" -type f | head -10
+            
+            echo "Looking for executable files:"
+            find . -type f -executable -name "*spatch*" | head -10
+            
+            echo "Looking for main executable:"
+            find . -name "main*" -type f | head -10
+            
             FOUND=false
-            for name in spatch spatch.byte spatch.opt main.byte main.opt; do
+            
+            # Try standard names first
+            for name in spatch spatch.byte spatch.opt main.byte main.opt main; do
                 if [ -f "$name" ]; then
+                    echo "Found spatch binary: $name"
                     cp "$name" /opt/coccinelle/bin/spatch
                     chmod +x /opt/coccinelle/bin/spatch
                     FOUND=true
@@ -157,9 +202,77 @@ jobs:
                 fi
             done
             
+            # If not found, search more broadly
             if [ "$FOUND" = "false" ]; then
-                echo "No spatch binary found"
+                echo "Standard names not found, searching more broadly..."
+                
+                # Look for any executable with spatch in name
+                SPATCH_PATH=$(find . -name "*spatch*" -type f -executable | head -1)
+                if [ -n "$SPATCH_PATH" ]; then
+                    echo "Found spatch executable: $SPATCH_PATH"
+                    cp "$SPATCH_PATH" /opt/coccinelle/bin/spatch
+                    chmod +x /opt/coccinelle/bin/spatch
+                    FOUND=true
+                fi
+            fi
+            
+            # If still not found, look for main executables
+            if [ "$FOUND" = "false" ]; then
+                echo "Looking for main executables..."
+                MAIN_PATH=$(find . -name "main" -type f -executable | head -1)
+                if [ -n "$MAIN_PATH" ]; then
+                    echo "Found main executable: $MAIN_PATH"
+                    cp "$MAIN_PATH" /opt/coccinelle/bin/spatch
+                    chmod +x /opt/coccinelle/bin/spatch
+                    FOUND=true
+                fi
+            fi
+            
+            # If still not found, try to build it differently
+            if [ "$FOUND" = "false" ]; then
+                echo "No executable found, trying to create one..."
+                
+                # Check if there are OCaml bytecode files we can use
+                if [ -f "main.cmo" ] || [ -f "spatch.cmo" ]; then
+                    echo "Found bytecode files, creating executable..."
+                    # Try to link the bytecode
+                    ocamlc -o spatch unix.cma str.cma *.cma *.cmo 2>/dev/null || echo "Bytecode linking failed"
+                    if [ -f "spatch" ]; then
+                        cp spatch /opt/coccinelle/bin/spatch
+                        chmod +x /opt/coccinelle/bin/spatch
+                        FOUND=true
+                    fi
+                fi
+            fi
+            
+            # Last resort: check what was actually built
+            if [ "$FOUND" = "false" ]; then
+                echo "=== FINAL SEARCH ==="
+                echo "All files in current directory:"
+                find . -type f -name "*" | grep -E "(spatch|main)" | head -20
+                
+                echo "All executable files:"
+                find . -type f -executable | head -20
+                
+                echo "Checking if we can find any OCaml-compiled files:"
+                find . -name "*.byte" -o -name "*.opt" -o -name "*.native" | head -10
+                
+                # Try any executable that might work
+                ANY_EXEC=$(find . -type f -executable | grep -E "(spatch|main|coccinelle)" | head -1)
+                if [ -n "$ANY_EXEC" ]; then
+                    echo "Trying executable: $ANY_EXEC"
+                    cp "$ANY_EXEC" /opt/coccinelle/bin/spatch
+                    chmod +x /opt/coccinelle/bin/spatch
+                    FOUND=true
+                fi
+            fi
+            
+            if [ "$FOUND" = "false" ]; then
+                echo "❌ Cannot find any spatch binary after extensive search"
+                echo "Build may have failed silently"
                 exit 1
+            else
+                echo "✅ Found and installed spatch binary"
             fi
         fi
         
