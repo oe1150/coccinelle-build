@@ -54,7 +54,7 @@ EOF
         uses: softprops/action-gh-release@v2
         with:
           tag_name: spatch-1.0.7-static
-          name: Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
+          name: "Static Spatch 1.0.7 (GLIBC 2.23 Compatible)"
           files: output/spatch-1.0.7-static.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
