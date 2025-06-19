@@ -1,4 +1,4 @@
-name: Build Static Coccinelle (GLIBC 2.23 Compatible)
+name: Build Static Coccinelle (spatch) - Ubuntu 16.04 Compatible
 
 on:
   workflow_dispatch:
@@ -12,34 +12,61 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
-    - name: Build Static Coccinelle in Docker (Ubuntu 16.04)
+    - name: Build Coccinelle statically in Ubuntu 16.04
       run: |
         docker run --rm -v ${{ github.workspace }}:/output ubuntu:16.04 bash -c '
-          set -e
-          apt-get update && apt-get install -y \
-            build-essential ocaml ocaml-native-compilers ocaml-findlib \
-            libnum-ocaml-dev libpcre3-dev libpcre-ocaml-dev pkg-config \
-            python3-dev autoconf automake libtool m4 wget curl ca-certificates
+          set -ex
 
+          echo "=== Fixing outdated APT sources ==="
+          sed -i "s|http://.*.ubuntu.com|http://old-releases.ubuntu.com|g" /etc/apt/sources.list
+          apt-get update
+
+          echo "=== Installing build dependencies ==="
+          apt-get install -y \
+            build-essential \
+            ocaml \
+            ocaml-native-compilers \
+            ocaml-findlib \
+            libpcre3-dev \
+            libpcre-ocaml-dev \
+            pkg-config \
+            python3-dev \
+            autoconf \
+            automake \
+            libtool \
+            m4 \
+            wget \
+            curl \
+            ca-certificates
+
+          echo "=== Downloading and building Coccinelle 1.0.7 ==="
           cd /tmp
-          VERSION="1.0.7"
-          wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
-          tar -xzf $VERSION.tar.gz
-          cd coccinelle-$VERSION
+          wget -q https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz -O coccinelle.tar.gz
+          tar -xzf coccinelle.tar.gz
+          cd coccinelle-1.0.7
 
           autoreconf -fiv
-          ./configure --prefix=/output/cocci-out --disable-python
-          make -j$(nproc)
+
+          ./configure --prefix=/opt/static-spatch --disable-python
+          make -j1
           make install
 
-          cd /output
-          tar -czf coccinelle-$VERSION-static-ubuntu16.tar.gz cocci-out
+          cd /opt
+          tar -czf /output/spatch-1.0.7-ubuntu16.tar.gz static-spatch
         '
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
+    - name: Upload artifact to release
+      uses: softprops/action-gh-release@v1
       with:
-        name: coccinelle-static
-        path: coccinelle-*-static-ubuntu16.tar.gz
+        tag_name: spatch-1.0.7
+        name: Static spatch (Coccinelle 1.0.7) for Ubuntu 16.04+
+        body: |
+          - GLIBC 2.23 compatible
+          - Built statically inside Ubuntu 16.04
+          - Ready to use with gentree.py
+        files: |
+          spatch-1.0.7-ubuntu16.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
