@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    container: ubuntu:20.04
+    container: ubuntu:16.04
     
     steps:
     - name: Build Coccinelle package
@@ -17,47 +17,106 @@ jobs:
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
         
-        # 安裝編譯依賴
-        apt-get install -y -qq build-essential ocaml ocaml-native-compilers camlp4-extra \
-                               libpcre3-dev libpcre-ocaml-dev pkg-config python3-dev python3-setuptools \
-                               tar curl ca-certificates wget git autoconf automake \
-                               ocaml-findlib
+        # 安裝編譯依賴 - 在 Ubuntu 16.04 環境中編譯以確保兼容性
+        apt-get install -y -qq \
+            build-essential \
+            ocaml \
+            ocaml-native-compilers \
+            ocaml-findlib \
+            libpcre3-dev \
+            pkg-config \
+            python3-dev \
+            python3-setuptools \
+            tar curl ca-certificates wget git \
+            autoconf automake \
+            libtool \
+            m4 \
+            software-properties-common || echo "Some packages not available"
         
-        echo "Installing Coccinelle 1.0.7 from source..."
+        # 嘗試安裝更新的 OCaml 版本（如果可能）
+        add-apt-repository -y ppa:avsm/ppa || echo "PPA not available"
+        apt-get update -qq || echo "Update failed"
+        apt-get install -y -qq ocaml ocaml-findlib || echo "Updated OCaml not available"
         
-        # 檢查 OCaml 包的可用性
-        echo "Checking OCaml packages..."
-        ocamlfind list | grep pcre || echo "PCRE not found via ocamlfind"
+        echo "Target system GLIBC: 2.23 (Ubuntu 16.04 compatible)"
+        echo "Building Coccinelle with static linking where possible..."
         
-        # 嘗試安裝更多 OCaml PCRE 相關包
-        apt-get install -y -qq libpcre-ocaml libpcre-ocaml-dev || echo "Additional PCRE packages not available"
-        
-        # 下載 Coccinelle 1.0.7 源碼
         cd /tmp
-        wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz
-        tar -xzf 1.0.7.tar.gz
-        cd coccinelle-1.0.7
         
-        # 如果 PCRE OCaml 包不可用，禁用 PCRE 支持
-        echo "Configuring Coccinelle..."
-        if ocamlfind list | grep -q pcre; then
-            echo "PCRE OCaml binding found, enabling PCRE support"
-            ./autogen
-            ./configure --prefix=/usr/local --enable-python --enable-pcre
-        else
-            echo "PCRE OCaml binding not found, disabling PCRE support"
-            ./autogen
-            ./configure --prefix=/usr/local --enable-python --disable-pcre
+        # 首先嘗試編譯 1.0.8，如果失敗則降級
+        for VERSION in "1.0.8" "1.0.7" "1.0.6"; do
+            echo "Attempting Coccinelle $VERSION..."
+            
+            rm -rf coccinelle-*
+            wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
+            tar -xzf $VERSION.tar.gz
+            cd coccinelle-$VERSION
+            
+            # 檢查 OCaml 版本
+            echo "OCaml version: $(ocaml -version)"
+            
+            # 生成配置文件
+            ./autogen || (echo "Autogen failed, trying manual..." && autoreconf -fiv)
+            
+            # 配置 - 針對舊系統優化，嘗試靜態鏈接
+            echo "Configuring for compatibility..."
+            ./configure \
+                --prefix=/usr/local \
+                --disable-opt \
+                --disable-pcre \
+                --disable-python \
+                --enable-release \
+                LDFLAGS="-static-libgcc" \
+                CFLAGS="-O2 -g" \
+                || (echo "Configure with static failed, trying standard..." && \
+                    ./configure --prefix=/usr/local --disable-opt --disable-pcre --disable-python)
+            
+            # 編譯
+            echo "Building..."
+            make clean || true
+            
+            # 嘗試靜態編譯
+            if make LDFLAGS="-static" -j1 2>/dev/null; then
+                echo "✅ Static build successful for $VERSION!"
+                file spatch
+                ldd spatch || echo "Static binary (no dynamic dependencies)"
+                ./spatch --version
+                make install
+                SPATCH_PATH="/usr/local/bin/spatch"
+                BUILT_VERSION="$VERSION"
+                break
+            elif make -j1; then
+                echo "✅ Dynamic build successful for $VERSION!"
+                file spatch
+                ldd spatch | head -5
+                ./spatch --version
+                make install
+                SPATCH_PATH="/usr/local/bin/spatch"
+                BUILT_VERSION="$VERSION"
+                break
+            else
+                echo "❌ Build failed for $VERSION, trying next..."
+                cd /tmp
+                continue
+            fi
+        done
+        
+        # 如果所有編譯都失敗，使用系統包
+        if [ ! -x "$SPATCH_PATH" ]; then
+            echo "All source builds failed, using system package..."
+            apt-get install -y -qq coccinelle
+            SPATCH_PATH="/usr/bin/spatch"
+            BUILT_VERSION="system"
         fi
-        make
-        make install
         
-        # 檢查安裝
-        echo "Installed Coccinelle version:"
-        /usr/local/bin/spatch --version
+        # 檢查最終結果
+        echo "Final spatch version:"
+        $SPATCH_PATH --version || echo "Version check failed"
+        echo "Built version: $BUILT_VERSION"
         
-        # 返回工作目錄
-        cd /github/workspace || cd /
+        # 檢查二進制依賴
+        echo "Binary dependencies:"
+        ldd $SPATCH_PATH | head -10 || echo "Static binary"
         
         echo "Creating portable package..."
         rm -rf portable-coccinelle
@@ -66,17 +125,23 @@ jobs:
         mkdir -p portable-coccinelle/share
         mkdir -p portable-coccinelle/usr-local
         
-        # 複製編譯好的 spatch
-        cp /usr/local/bin/spatch portable-coccinelle/bin/
-        echo "Copied spatch from /usr/local/bin/"
+        # 複製 spatch（使用找到的路徑）
+        cp "$SPATCH_PATH" portable-coccinelle/bin/
+        echo "Copied spatch from $SPATCH_PATH"
         
-        # 複製 Coccinelle 庫文件
-        echo "Copying Coccinelle libraries..."
-        if [ -d /usr/local/lib/coccinelle ]; then
-            cp -r /usr/local/lib/coccinelle portable-coccinelle/usr-local/
-            echo "Copied from /usr/local/lib/coccinelle/"
-            ls -la /usr/local/lib/coccinelle/ | head -5
-        fi
+        # 檢查實際版本
+        ACTUAL_VERSION=$(portable-coccinelle/bin/spatch --version 2>/dev/null | head -1 || echo "unknown")
+        echo "Package will contain: $ACTUAL_VERSION"
+        
+        # 複製相關庫文件（根據實際安裝位置）
+        echo "Copying libraries..."
+        for lib_dir in /usr/local/lib/coccinelle /usr/lib/coccinelle; do
+            if [ -d "$lib_dir" ]; then
+                cp -r "$lib_dir" portable-coccinelle/usr-local/
+                echo "Copied from $lib_dir"
+                break
+            fi
+        done
         
         # 複製 OCaml 庫
         echo "Copying OCaml libraries..."
@@ -90,17 +155,23 @@ jobs:
         
         # 複製 share 文件
         echo "Copying share files..."
-        if [ -d /usr/local/share/coccinelle ]; then
-            cp -r /usr/local/share/coccinelle portable-coccinelle/share/
-            echo "Copied from /usr/local/share/coccinelle/"
-        fi
+        for share_dir in /usr/local/share/coccinelle /usr/share/coccinelle; do
+            if [ -d "$share_dir" ]; then
+                cp -r "$share_dir" portable-coccinelle/share/
+                echo "Copied from $share_dir"
+                break
+            fi
+        done
         
         # 複製 Python 模組
-        if [ -d /usr/local/lib/python*/site-packages/coccinelle ]; then
-            mkdir -p portable-coccinelle/python
-            cp -r /usr/local/lib/python*/site-packages/coccinelle portable-coccinelle/python/ 2>/dev/null || true
-            echo "Copied Python modules"
-        fi
+        for python_dir in /usr/local/lib/python*/site-packages/coccinelle /usr/lib/python*/dist-packages/coccinelle; do
+            if [ -d "$python_dir" ]; then
+                mkdir -p portable-coccinelle/python
+                cp -r "$python_dir" portable-coccinelle/python/ 2>/dev/null || true
+                echo "Copied Python modules from $python_dir"
+                break
+            fi
+        done
         
         # 檢查我們複製了什麼
         echo "Checking copied files:"
@@ -144,16 +215,25 @@ jobs:
         ./portable-coccinelle/spatch --version || echo "Direct test failed, but package created"
         
         # 創建 README
-        echo "# Portable Coccinelle 1.0.7" > portable-coccinelle/README.md
+        FINAL_VERSION=$($SPATCH_PATH --version 2>/dev/null | head -1 || echo "Unknown")
+        echo "# Portable Coccinelle (Ubuntu 16.04 Compatible)" > portable-coccinelle/README.md
         echo "" >> portable-coccinelle/README.md
-        echo "Built from source on Ubuntu 18.04" >> portable-coccinelle/README.md
+        echo "Version: $FINAL_VERSION" >> portable-coccinelle/README.md
+        echo "Built version: $BUILT_VERSION" >> portable-coccinelle/README.md
+        echo "Target GLIBC: 2.23+ (Ubuntu 16.04+)" >> portable-coccinelle/README.md
+        echo "Built on: Ubuntu 16.04 for maximum compatibility" >> portable-coccinelle/README.md
+        echo "" >> portable-coccinelle/README.md
+        echo "## Binary Info" >> portable-coccinelle/README.md
+        ldd $SPATCH_PATH >> portable-coccinelle/README.md 2>/dev/null || echo "Static binary (no dependencies)" >> portable-coccinelle/README.md
         echo "" >> portable-coccinelle/README.md
         echo "## Usage" >> portable-coccinelle/README.md
         echo "./spatch.sh --version" >> portable-coccinelle/README.md
         echo "./spatch --version" >> portable-coccinelle/README.md
         
-        tar -czf coccinelle-1.0.7-portable.tar.gz portable-coccinelle/
-        echo "Package size: $(du -h coccinelle-1.0.7-portable.tar.gz | cut -f1)"
+        tar -czf coccinelle-compatible-portable.tar.gz portable-coccinelle/
+        echo "Package size: $(du -h coccinelle-compatible-portable.tar.gz | cut -f1)"
+        echo "Final version in package: $FINAL_VERSION"
+        echo "Built for GLIBC 2.23+ compatibility"
         
         chmod +x portable-coccinelle/spatch.sh
         
@@ -213,7 +293,7 @@ jobs:
             -H "Authorization: token $GITHUB_TOKEN" \
             -H "Content-Type: application/gzip" \
             --data-binary @coccinelle-portable.tar.gz \
-            "${UPLOAD_URL}?name=coccinelle-1.0.7-portable.tar.gz")
+            "${UPLOAD_URL}?name=coccinelle-compatible-portable.tar.gz")
           
           DOWNLOAD_URL=$(echo "$UPLOAD_RESPONSE" | grep -o '"browser_download_url": "[^"]*' | cut -d'"' -f4)
           
@@ -237,14 +317,14 @@ jobs:
             echo "1. Go to: https://github.com/$GITHUB_REPOSITORY/releases/new"
             echo "2. Tag: $RELEASE_TAG"
             echo "3. Title: $RELEASE_NAME"
-            echo "4. Upload the file: coccinelle-1.0.7-portable.tar.gz ($(du -h coccinelle-1.0.7-portable.tar.gz | cut -f1))"
+            echo "4. Upload the file: coccinelle-compatible-portable.tar.gz ($(du -h coccinelle-compatible-portable.tar.gz | cut -f1))"
             echo ""
             echo "OR use file sharing services:"
             echo "Trying alternative upload..."
             
             for service in "https://file.io" "https://0x0.st"; do
               echo "Trying $service..."
-              UPLOAD_RESULT=$(curl -s --connect-timeout 10 -F "file=@coccinelle-1.0.7-portable.tar.gz" "$service" 2>/dev/null || echo "failed")
+              UPLOAD_RESULT=$(curl -s --connect-timeout 10 -F "file=@coccinelle-compatible-portable.tar.gz" "$service" 2>/dev/null || echo "failed")
               if echo "$UPLOAD_RESULT" | grep -q "http"; then
                 echo "SUCCESS: $UPLOAD_RESULT"
                 break
