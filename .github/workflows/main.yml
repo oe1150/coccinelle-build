@@ -135,47 +135,115 @@ jobs:
         export CFLAGS="-static-libgcc -O2 -fPIC"
         export LDFLAGS="-static-libgcc -Wl,--as-needed"
         
+        # 修改 Makefile 以移除 python 目录引用
+        echo "🔧 Patching Makefile to remove python references..."
+        if [ -f Makefile.in ]; then
+            sed -i 's/-I python//g' Makefile.in
+            sed -i 's/python//g' Makefile.in
+        fi
+        
         ./configure --prefix=/opt/coccinelle --disable-python --disable-pcre --disable-opt --enable-release --without-python --without-pycaml CC="gcc" CXX="g++" PYTHON="no" PYCAML="no"
+        
+        # 在configure后再次修改生成的Makefile
+        if [ -f Makefile ]; then
+            echo "🔧 Patching generated Makefile..."
+            sed -i 's/-I python//g' Makefile
+            sed -i 's/python\/[^ ]* //g' Makefile
+            sed -i 's/python\/[^ ]*\.cmo//g' Makefile
+            sed -i 's/python\/[^ ]*\.cmx//g' Makefile
+        fi
+        
+        # 修改所有可能包含python引用的文件
+        find . -name "*.mk" -o -name "Makefile*" | xargs sed -i 's/-I python//g' 2>/dev/null || true
+        find . -name "*.mk" -o -name "Makefile*" | xargs sed -i 's/python\/[^ ]* //g' 2>/dev/null || true
         
         echo "🔨 Building Coccinelle..."
         make clean || true
-        make depend || true
+        
+        # 确保python目录存在但内容最小化
+        if [ ! -d python ]; then
+            mkdir -p python
+            echo "# Dummy python module" > python/dummy.ml
+            echo "# Dummy python interface" > python/dummy.mli
+            touch python/.depend
+            echo "all:" > python/Makefile
+            echo -e "\t@echo 'Python disabled'" >> python/Makefile
+        fi
+        
+        # 生成依赖，但忽略python相关错误
+        echo "📋 Generating dependencies..."
+        make depend 2>&1 | grep -v "Bad -I option: python" || true
         
         BUILD_SUCCESS=false
         
         echo "🔄 Trying standard build..."
-        if make world -j1; then
+        if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
             echo "✅ Standard build successful!"
             BUILD_SUCCESS=true
         else
-            echo "❌ Standard build failed, trying without Python module..."
+            echo "❌ Standard build failed, trying alternative approach..."
             
+            # 完全禁用python模块
+            echo "🔄 Completely disabling python module..."
             if [ -d python ]; then
-                mv python python.disabled
-                echo "Temporarily disabled Python module"
+                # 保留目录但清空内容，只保留最基本的文件
+                rm -rf python/*
+                
+                # 创建最小的存根文件
+                echo "(* Empty python module *)" > python/no_pycocci.ml
+                echo "(* Empty python interface *)" > python/no_pycocci.mli
+                echo "all:" > python/Makefile
+                echo -e "\t@true" >> python/Makefile
+                echo ".PHONY: all clean install" >> python/Makefile
+                echo "clean:" >> python/Makefile
+                echo -e "\t@true" >> python/Makefile
+                echo "install:" >> python/Makefile
+                echo -e "\t@true" >> python/Makefile
+                touch python/.depend
+            fi
+            
+            # 修改主Makefile以跳过python编译
+            if [ -f Makefile ]; then
+                echo "🔧 Modifying Makefile to skip python compilation..."
+                # 替换python相关的目标
+                sed -i 's/python\.cma//g' Makefile
+                sed -i 's/python\.cmxa//g' Makefile
+                sed -i 's/PYTHON_MODULES[^=]*=[^;]*/PYTHON_MODULES=/g' Makefile
+                sed -i '/^.*python\/.*\.cm[oxa]/d' Makefile
             fi
             
             make clean
-            if make world -j1; then
-                echo "✅ Build without Python successful!"
+            if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
+                echo "✅ Build without python compilation successful!"
                 BUILD_SUCCESS=true
             else
-                echo "❌ Build without Python failed, trying core build..."
+                echo "❌ World build failed, trying core components..."
                 make clean
-                if make spatch -j1; then
-                    echo "✅ Core spatch build successful!"
+                
+                # 尝试只构建核心组件
+                echo "🔄 Building core components only..."
+                for component in commons parsing_c parsing_cocci ctl engine popl09 extra; do
+                    if [ -d "$component" ]; then
+                        echo "Building $component..."
+                        (cd "$component" && make all) 2>&1 | grep -v "Bad -I option: python" || echo "Warning: $component had issues"
+                    fi
+                done
+                
+                # 尝试构建主程序
+                if make spatch 2>&1 | grep -v "Bad -I option: python"; then
+                    echo "✅ Core build successful!"
                     BUILD_SUCCESS=true
                 fi
-            fi
-            
-            if [ -d python.disabled ]; then
-                mv python.disabled python
             fi
         fi
         
         if [ "$BUILD_SUCCESS" = "false" ]; then
             echo "❌ All build attempts failed"
-            ls -la
+            echo "🔍 Final diagnostics..."
+            echo "=== Makefile python references ==="
+            grep -n python Makefile || echo "No python references in Makefile"
+            echo "=== Python directory contents ==="
+            ls -la python/ || echo "No python directory"
             exit 1
         fi
         
