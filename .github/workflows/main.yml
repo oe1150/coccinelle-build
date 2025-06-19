@@ -32,7 +32,10 @@ jobs:
           wget \
           curl \
           tar
-        
+  
+        opam init -y --disable-sandboxing && eval $(opam env)
+        opam install -y stdcompat
+  
         echo "OCaml version: $(ocaml -version)"
         echo "Available OCaml packages:"
         ocamlfind list | head -10
