@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
-    container: ubuntu:18.04
+    container: ubuntu:20.04
     
     steps:
     - name: Build Coccinelle package
@@ -19,10 +19,18 @@ jobs:
         
         # 安裝編譯依賴
         apt-get install -y -qq build-essential ocaml ocaml-native-compilers camlp4-extra \
-                               libpcre3-dev pkg-config python3-dev python3-setuptools \
-                               tar curl ca-certificates wget git autoconf
+                               libpcre3-dev libpcre-ocaml-dev pkg-config python3-dev python3-setuptools \
+                               tar curl ca-certificates wget git autoconf automake \
+                               ocaml-findlib
         
         echo "Installing Coccinelle 1.0.7 from source..."
+        
+        # 檢查 OCaml 包的可用性
+        echo "Checking OCaml packages..."
+        ocamlfind list | grep pcre || echo "PCRE not found via ocamlfind"
+        
+        # 嘗試安裝更多 OCaml PCRE 相關包
+        apt-get install -y -qq libpcre-ocaml libpcre-ocaml-dev || echo "Additional PCRE packages not available"
         
         # 下載 Coccinelle 1.0.7 源碼
         cd /tmp
@@ -30,9 +38,17 @@ jobs:
         tar -xzf 1.0.7.tar.gz
         cd coccinelle-1.0.7
         
-        # 配置並編譯
-        ./autogen
-        ./configure --prefix=/usr/local --enable-python --enable-pcre
+        # 如果 PCRE OCaml 包不可用，禁用 PCRE 支持
+        echo "Configuring Coccinelle..."
+        if ocamlfind list | grep -q pcre; then
+            echo "PCRE OCaml binding found, enabling PCRE support"
+            ./autogen
+            ./configure --prefix=/usr/local --enable-python --enable-pcre
+        else
+            echo "PCRE OCaml binding not found, disabling PCRE support"
+            ./autogen
+            ./configure --prefix=/usr/local --enable-python --disable-pcre
+        fi
         make
         make install
         
