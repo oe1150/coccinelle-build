@@ -30,11 +30,61 @@ jobs:
         tar -xzf 1.0.7.tar.gz
         cd coccinelle-1.0.7
         
+        # Fix Python binding issue
+        echo "Fixing Python binding compilation issue..."
+        
+        # Create missing Python interface files
+        mkdir -p python
+        touch python/no_pycocci.mli
+        touch python/no_pycocci.ml
+        
+        # Alternative: modify Makefile to skip Python completely
+        if [ -f Makefile.in ]; then
+            sed -i 's/python\/no_pycocci\.mli//g' Makefile.in
+            sed -i 's/python\/no_pycocci\.cmi//g' Makefile.in
+        fi
+        
         # Configure and build
         ./autogen
-        ./configure --prefix=/opt/coccinelle --disable-pcre --disable-python
-        make -j1
-        make install
+        
+        # Try different configuration approaches
+        if ./configure --prefix=/opt/coccinelle --disable-pcre --disable-python --disable-opt; then
+            echo "Configuration 1 successful"
+        elif ./configure --prefix=/opt/coccinelle --disable-python; then
+            echo "Configuration 2 successful"  
+        elif ./configure --prefix=/opt/coccinelle; then
+            echo "Configuration 3 successful"
+        else
+            echo "All configurations failed"
+            exit 1
+        fi
+        
+        # Build with error handling
+        if make -j1; then
+            echo "Build successful"
+        else
+            echo "Build failed, trying clean build..."
+            make clean
+            
+            # Try building specific targets to avoid Python issues
+            if make spatch; then
+                echo "Spatch binary built successfully"
+                mkdir -p /opt/coccinelle/bin
+                cp spatch /opt/coccinelle/bin/
+            else
+                echo "Even spatch build failed"
+                exit 1
+            fi
+        fi
+        
+        # Install if make install works, otherwise manual copy
+        if make install 2>/dev/null; then
+            echo "Installation successful"
+        else
+            echo "Manual installation..."
+            mkdir -p /opt/coccinelle/bin
+            cp spatch /opt/coccinelle/bin/ 2>/dev/null || cp spatch.opt /opt/coccinelle/bin/spatch 2>/dev/null || cp spatch.byte /opt/coccinelle/bin/spatch
+        fi
         
         # Test
         /opt/coccinelle/bin/spatch --version
