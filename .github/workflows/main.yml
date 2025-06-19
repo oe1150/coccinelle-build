@@ -1,345 +1,75 @@
-name: Build True Static Coccinelle - No GLIBC Dependencies
+name: Build Static Coccinelle (musl + GLIBC 2.23 compatible)
 
 on:
   workflow_dispatch:
 
 permissions:
   contents: write
-  
+
 jobs:
   build:
     runs-on: ubuntu-22.04
-    
+
     steps:
-    - name: Build Truly Static Coccinelle
-      run: |
-        echo "🔧 Building TRULY STATIC Coccinelle (no GLIBC dependencies)"
-        
-        # Use Alpine Linux for true static compilation
-        docker pull alpine:3.16
-        
-        cat > build_true_static.sh << 'EOF'
-#!/bin/sh
-set -e
+      - name: Checkout
+        uses: actions/checkout@v3
 
-echo "=== True Static Build with Alpine Linux ==="
-echo "This build will have NO external dependencies!"
+      - name: Install Docker and run build
+        run: |
+          docker run --rm -v $(pwd):/output ubuntu:16.04 bash -c "
+            set -ex
 
-# Install build dependencies in Alpine
-apk add --no-cache \
-    build-base \
-    ocaml \
-    ocaml-dev \
-    ocaml-findlib \
-    ocaml-findlib-dev \
-    autoconf \
-    automake \
-    libtool \
-    m4 \
-    wget \
-    curl \
-    linux-headers \
-    musl-dev \
-    pcre-dev
+            echo 'deb http://archive.ubuntu.com/ubuntu xenial main universe' > /etc/apt/sources.list
+            apt-get update
+            apt-get install -y \
+              build-essential \
+              musl-tools \
+              ocaml \
+              ocaml-native-compilers \
+              ocaml-findlib \
+              libnum-ocaml-dev \
+              libpcre3-dev \
+              libpcre-ocaml-dev \
+              pkg-config \
+              autoconf \
+              automake \
+              libtool \
+              m4 \
+              curl \
+              wget \
+              ca-certificates
 
-echo "OCaml version: $(ocaml -version)"
-echo "System: $(uname -a)"
+            cd /tmp
+            wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz
+            tar -xf 1.0.7.tar.gz
+            cd coccinelle-1.0.7
 
-cd /tmp
+            autoreconf -fiv
 
-# Try multiple versions, starting with 1.0.7 as requested
-for VERSION in "1.0.7" "1.0.6" "1.0.5" "1.0.4"; do
-    echo "========================================="
-    echo "Attempting STATIC build of Coccinelle $VERSION"
-    echo "========================================="
-    
-    rm -rf coccinelle-*
-    
-    if wget -q "https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz"; then
-        tar -xzf "$VERSION.tar.gz"
-        cd "coccinelle-$VERSION"
-        
-        echo "Configuring for static build..."
-        
-        # Export flags for static linking
-        export LDFLAGS="-static -static-libgcc"
-        export CFLAGS="-static"
-        export CPPFLAGS="-static"
-        
-        # Configure with static options
-        if ./autogen 2>/dev/null || autoreconf -fiv; then
-            # Try different configuration approaches
-            CONFIG_SUCCESS=0
-            
-            # Approach 1: Minimal static build specifically for 1.0.7
-            if ./configure \
-                --prefix=/opt/static-coccinelle \
-                --disable-shared \
-                --enable-static \
-                --disable-pcre \
-                --disable-python \
-                --disable-opt \
-                --with-runtime-ocaml-libs \
-                LDFLAGS="-static" \
-                CFLAGS="-static"; then
-                CONFIG_SUCCESS=1
-                echo "✅ Static configuration successful for version $VERSION"
-            # Approach 2: Try with fewer restrictions for 1.0.7
-            elif ./configure \
-                --prefix=/opt/static-coccinelle \
-                --disable-shared \
-                --disable-python \
-                --disable-opt \
-                LDFLAGS="-static" \
-                CFLAGS="-static"; then
-                CONFIG_SUCCESS=1
-                echo "✅ Alternative static configuration successful for version $VERSION"
-            # Approach 3: Even more minimal
-            elif ./configure \
-                --prefix=/opt/static-coccinelle \
-                --disable-shared \
-                --disable-pcre \
-                --disable-python; then
-                CONFIG_SUCCESS=1
-                echo "✅ Minimal configuration successful for version $VERSION"
-            fi
-            
-            if [ $CONFIG_SUCCESS -eq 1 ]; then
-                echo "Building with static linking..."
-                
-                # Try to build with static linking
-                if make -j1 LDFLAGS="-static -static-libgcc" CFLAGS="-static"; then
-                    echo "✅ Static build successful!"
-                    
-                    # Find the executable
-                    SPATCH_FOUND=""
-                    for spatch_name in "spatch" "spatch.opt" "spatch.byte"; do
-                        if [ -f "$spatch_name" ]; then
-                            SPATCH_FOUND="$spatch_name"
-                            echo "Found executable: $spatch_name"
-                            
-                            # Check if it's truly static
-                            echo "File info:"
-                            file "$spatch_name"
-                            echo "Dependencies (should show 'not a dynamic executable'):"
-                            ldd "$spatch_name" 2>&1 || echo "✅ Truly static binary!"
-                            
-                            break
-                        fi
-                    done
-                    
-                    if [ -n "$SPATCH_FOUND" ]; then
-                        echo "Testing static binary..."
-                        if ./"$SPATCH_FOUND" --version; then
-                            echo "✅ Static spatch works!"
-                            
-                            # Install
-                            make install
-                            
-                            # Copy to standard name if needed
-                            if [ "$SPATCH_FOUND" != "spatch" ]; then
-                                cp "$SPATCH_FOUND" /opt/static-coccinelle/bin/spatch
-                            fi
-                            
-                            echo "$VERSION-static" > /tmp/SUCCESS_VERSION
-                            echo "🎉 Successfully built STATIC Coccinelle $VERSION (prioritizing 1.0.7)"
-                            
-                            # If this is 1.0.7, we're done!
-                            if [ "$VERSION" = "1.0.7" ]; then
-                                echo "🎯 SUCCESS: Got the requested version 1.0.7!"
-                                break
-                            else
-                                echo "✅ Got version $VERSION, but will continue if 1.0.7 becomes available"
-                            fi
-                            break
-                        fi
-                    fi
-                else
-                    echo "Static build failed, trying without static flags..."
-                    make clean 2>/dev/null || true
-                    
-                    # Fallback: build normally but try to minimize dependencies
-                    if make -j1; then
-                        if [ -f spatch ] && ./spatch --version; then
-                            make install
-                            echo "$VERSION-semi-static" > /tmp/SUCCESS_VERSION
-                            echo "✅ Semi-static build successful for version $VERSION"
-                            
-                            # Prefer 1.0.7 even for semi-static builds
-                            if [ "$VERSION" = "1.0.7" ]; then
-                                echo "🎯 SUCCESS: Got the requested version 1.0.7 (semi-static)!"
-                                break
-                            fi
-                            break
-                        fi
-                    fi
-                fi
-            fi
-        fi
-        
-        cd /tmp
-    else
-        echo "❌ Failed to download version $VERSION"
-    fi
-done
+            CC=musl-gcc ./configure \
+              --disable-python \
+              --disable-pcre \
+              --disable-shared \
+              --enable-ocaml \
+              --prefix=/opt/spatch-static
 
-if [ ! -f /tmp/SUCCESS_VERSION ]; then
-    echo "❌ All static builds failed"
-    exit 1
-fi
+            make -j1 LDFLAGS='-static'
+            make install
 
-SUCCESS_VERSION=$(cat /tmp/SUCCESS_VERSION)
-echo "🎉 Successfully built: $SUCCESS_VERSION"
+            mkdir -p /output/spatch-release/bin
+            cp /opt/spatch-static/bin/spatch /output/spatch-release/bin/
+            echo "Coccinelle 1.0.7 static build" > /output/spatch-release/README.txt
 
-# Verify the final binary
-echo "Final binary analysis:"
-/opt/static-coccinelle/bin/spatch --version
-echo "Dependencies check:"
-ldd /opt/static-coccinelle/bin/spatch 2>&1 || echo "✅ No dynamic dependencies!"
+            cd /output
+            tar -czf spatch-static-1.0.7.tar.gz spatch-release
+          "
 
-# Create truly portable package
-cd /opt
-rm -rf portable-static-coccinelle
-mkdir -p portable-static-coccinelle/bin
-
-# Copy the binary
-cp static-coccinelle/bin/spatch portable-static-coccinelle/bin/
-chmod +x portable-static-coccinelle/bin/spatch
-
-# Copy any necessary data files
-if [ -d static-coccinelle/share ]; then
-    cp -r static-coccinelle/share portable-static-coccinelle/
-fi
-
-if [ -d static-coccinelle/lib ]; then
-    cp -r static-coccinelle/lib portable-static-coccinelle/
-fi
-
-# Create simple wrapper (just in case)
-cat > portable-static-coccinelle/spatch << 'WRAPPER_EOF'
-#!/bin/sh
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$SCRIPT_DIR/bin/spatch" "$@"
-WRAPPER_EOF
-
-chmod +x portable-static-coccinelle/spatch
-
-# Test the portable version
-echo "Testing portable package:"
-./portable-static-coccinelle/spatch --version
-
-# Create the final package
-tar -czf "coccinelle-${SUCCESS_VERSION}-truly-static.tar.gz" portable-static-coccinelle/
-
-echo "📦 Static package created:"
-ls -la *.tar.gz
-
-# Final verification
-echo "Final package verification:"
-echo "Extracting and testing..."
-cd /tmp
-tar -xzf /opt/coccinelle-*-truly-static.tar.gz
-./portable-static-coccinelle/spatch --version
-echo "✅ Package verified!"
-
-EOF
-
-        chmod +x build_true_static.sh
-        
-        echo "🏔️ Running TRUE STATIC build in Alpine Linux..."
-        docker run --rm \
-            -v $(pwd)/build_true_static.sh:/build.sh \
-            -v $(pwd):/output \
-            alpine:3.16 \
-            sh -c "/build.sh && cp /opt/*.tar.gz /output/"
-        
-        # Check if we got a static package
-        if ls coccinelle-*-truly-static.tar.gz 1> /dev/null 2>&1; then
-            PACKAGE_FILE=$(ls coccinelle-*-truly-static.tar.gz | head -1)
-            echo "🎉 TRUE STATIC BUILD SUCCESSFUL!"
-            echo "📦 Package: $PACKAGE_FILE"
-            echo "📏 Size: $(du -h $PACKAGE_FILE | cut -f1)"
-            
-            # Test the package to make sure it's truly static
-            echo "🧪 Testing static package..."
-            tar -xzf "$PACKAGE_FILE"
-            cd portable-static-coccinelle
-            
-            # This should work without any GLIBC issues
-            echo "Testing static binary (should have NO dependencies):"
-            file bin/spatch
-            ldd bin/spatch 2>&1 || echo "✅ Confirmed: No dynamic dependencies!"
-            
-            ./spatch --version
-            cd ..
-            
-            VERSION=$(echo "$PACKAGE_FILE" | sed 's/coccinelle-\(.*\)-truly-static\.tar\.gz/\1/')
-            
-            echo "📤 Creating GitHub Release for STATIC build..."
-            RELEASE_TAG="coccinelle-static-${VERSION}-$(date +%Y%m%d-%H%M)"
-            RELEASE_NAME="Coccinelle ${VERSION} - TRUE STATIC v1.0.7 Priority (No GLIBC Dependencies)"
-            
-            RELEASE_DATA=$(cat << RELEASE_EOF
-{
-  "tag_name": "$RELEASE_TAG",
-  "target_commitish": "main", 
-  "name": "$RELEASE_NAME",
-  "body": "🎯 **TRULY STATIC Coccinelle ${VERSION} (Priority: v1.0.7)**\\n\\n✅ **ZERO Dependencies!**\\n- No GLIBC version requirements\\n- No external libraries needed\\n- Works on ANY Linux system\\n- **Specifically targeting version 1.0.7 as requested**\\n\\n🚀 **Fixes the GLIBC errors you encountered!**\\n\\n📋 **Usage:**\\n\`\`\`bash\\ntar -xzf $PACKAGE_FILE\\ncd portable-static-coccinelle/\\n./spatch --version  # Should show v1.0.7\\n\`\`\`\\n\\n🏔️ **Built with Alpine Linux for maximum compatibility**\\n🎯 **Version Priority: 1.0.7 > 1.0.6 > 1.0.5 > 1.0.4**",
-  "draft": false,
-  "prerelease": false
-}
-RELEASE_EOF
-)
-            
-            RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
-              -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              "https://api.github.com/repos/$GITHUB_REPOSITORY/releases" \
-              -d "$RELEASE_DATA")
-            
-            HTTP_CODE=$(echo "$RELEASE_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-            RESPONSE_BODY=$(echo "$RELEASE_RESPONSE" | sed 's/HTTP_CODE:[0-9]*$//')
-            
-            if [ "$HTTP_CODE" = "201" ]; then
-                UPLOAD_URL=$(echo "$RESPONSE_BODY" | grep -o '"upload_url": "[^"]*' | cut -d'"' -f4 | sed 's/{?name,label}//')
-                RELEASE_HTML_URL=$(echo "$RESPONSE_BODY" | grep -o '"html_url": "[^"]*' | cut -d'"' -f4)
-                
-                echo "📋 Release created: $RELEASE_HTML_URL"
-                
-                UPLOAD_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
-                  -H "Authorization: token $GITHUB_TOKEN" \
-                  -H "Content-Type: application/gzip" \
-                  --data-binary "@$PACKAGE_FILE" \
-                  "${UPLOAD_URL}?name=$PACKAGE_FILE")
-                
-                UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
-                
-                if [ "$UPLOAD_HTTP_CODE" = "201" ]; then
-                    echo ""
-                    echo "🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆"
-                    echo "🎉  STATIC BUILD SUCCESS! 🎉"
-                    echo "🚀  NO MORE GLIBC ERRORS! 🚀"
-                    echo "🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆🏆"
-                    echo ""
-                    echo "✅ Package: $PACKAGE_FILE"
-                    echo "🔗 Download: $RELEASE_HTML_URL"
-                    echo "📏 Size: $(du -h $PACKAGE_FILE | cut -f1)"
-                    echo "🎯 Version: $VERSION (targeting 1.0.7)"
-                    echo ""
-                    echo "🎊 This will work on your system!"
-                    echo "💪 No more GLIBC dependency issues!"
-                    echo ""
-                else
-                    echo "⚠️ Upload had issues but static build was successful!"
-                    echo "📦 Static package: $PACKAGE_FILE"
-                fi
-            else
-                echo "⚠️ Release creation had issues but STATIC BUILD SUCCEEDED!"
-                echo "📦 Static package: $PACKAGE_FILE"
-            fi
-        else
-            echo "❌ Static build failed"
-            exit 1
-        fi
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: spatch-1.0.7-static
+          name: "Coccinelle 1.0.7 Static (GLIBC 2.23 compatible)"
+          body: "This is a static build of Coccinelle 1.0.7 using musl-gcc, compatible with Ubuntu 16.04 (GLIBC 2.23)."
+          files: spatch-static-1.0.7.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
