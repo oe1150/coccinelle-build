@@ -115,20 +115,6 @@ jobs:
         export CFLAGS="-static-libgcc -O2 -fPIC"
         export LDFLAGS="-static-libgcc -Wl,--as-needed"
         
-        # Fix OCaml syntax error in engine/cocci_vs_c.ml
-        echo "Fixing OCaml syntax errors..."
-        if [ -f engine/cocci_vs_c.ml ]; then
-            # Backup original file
-            cp engine/cocci_vs_c.ml engine/cocci_vs_c.ml.backup
-            
-            # Fix line 763 - likely a function application issue
-            sed -i '763s/run_constraint.*arguments.*forgiven/run_constraint (fun _ -> true)/g' engine/cocci_vs_c.ml || true
-            sed -i '763s/run_constraint.*applied.*many/run_constraint (fun _ -> true)/g' engine/cocci_vs_c.ml || true
-            
-            # More generic fix for function application errors
-            sed -i 's/run_constraint[[:space:]]\+\([^(]\)/run_constraint (\1 -> true)/g' engine/cocci_vs_c.ml || true
-        fi
-        
         ./configure --prefix=/opt/coccinelle --disable-python --disable-pcre --disable-opt --enable-release --without-python --without-pycaml CC="gcc" CXX="g++" PYTHON="no" PYCAML="no"
         
         echo "Building..."
@@ -137,284 +123,21 @@ jobs:
         
         BUILD_OK=false
         
-        echo "Attempting build with error handling..."
         if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
             echo "Standard build successful"
             BUILD_OK=true
         else
-            echo "Standard build failed, trying to fix OCaml errors..."
-            
-            # Try to fix the specific error in cocci_vs_c.ml
-            if [ -f engine/cocci_vs_c.ml ]; then
-                echo "Attempting to fix engine/cocci_vs_c.ml line 763..."
-                
-                # Show the problematic line
-                echo "Problematic line:"
-                sed -n '763p' engine/cocci_vs_c.ml || true
-                
-                # Try different fixes
-                cp engine/cocci_vs_c.ml.backup engine/cocci_vs_c.ml 2>/dev/null || true
-                
-                # Method 1: Replace problematic function call
-                sed -i '763s/.*/      | _ -> true (* Fixed function application *)/' engine/cocci_vs_c.ml
-                
-                echo "After fix:"
-                sed -n '763p' engine/cocci_vs_c.ml || true
-            fi
-            
+            echo "Standard build failed, trying alternatives..."
             make clean
-            if make world -j1 2>&1 | grep -v "Bad -I option: python"; then
-                echo "Build successful after fix"
+            if make spatch -j1 2>&1 | grep -v "Bad -I option: python"; then
+                echo "Core build successful"
                 BUILD_OK=true
-            else
-                echo "Still failing, trying alternative build targets..."
-                
-                # Try building individual components first
-                make clean
-                echo "Building commons..."
-                (cd commons && make all) || echo "Commons had issues"
-                echo "Building parsing_c..."
-                (cd parsing_c && make all) || echo "Parsing_c had issues"
-                echo "Building parsing_cocci..."
-                (cd parsing_cocci && make all) || echo "Parsing_cocci had issues"
-                echo "Building ctl..."
-                (cd ctl && make all) || echo "CTL had issues"
-                
-                # Try to build engine with different approach
-                echo "Attempting engine build..."
-                if (cd engine && make all); then
-                    echo "Engine built successfully"
-                elif [ -f engine/cocci_vs_c.ml ]; then
-                    echo "Engine failed, trying to skip problematic file..."
-                    cd engine
-                    # Try to compile other files first
-                    for ml_file in *.ml; do
-                        if [ "$ml_file" != "cocci_vs_c.ml" ]; then
-                            echo "Compiling $ml_file..."
-                            ocamlc -I ../commons -I ../parsing_c -I ../parsing_cocci -I ../ctl -c "$ml_file" 2>/dev/null || echo "Failed: $ml_file"
-                        fi
-                    done
-                    cd ..
-                fi
-                
-                # Try building main program
-                echo "Attempting to build spatch..."
-                if make spatch 2>&1 | grep -v "Bad -I option: python"; then
-                    echo "Spatch built successfully"
-                    BUILD_OK=true
-                elif make main 2>&1 | grep -v "Bad -I option: python"; then
-                    echo "Main built successfully"
-                    BUILD_OK=true
-                fi
             fi
         fi
         
         if [ "$BUILD_OK" = "false" ]; then
-            echo "All builds failed, but checking for any binaries..."
-            echo "Looking for any spatch binaries that might have been created..."
-            find . -name "*spatch*" -type f -executable || true
-            find . -name "main*" -type f -executable || true
-            find . -name "*.byte" -type f -executable || true
-            find . -name "*.opt" -type f -executable || true
-            
-            # If we find any executable, use it
-            BINARY_FOUND=$(find . -name "*spatch*" -o -name "main*" | grep -E '\.(byte|opt)$|spatch$|main
-        
-        echo "Installing..."
-        if make install; then
-            echo "Installation successful"
-        else
-            echo "Manual installation..."
-            mkdir -p /opt/coccinelle/bin
-            
-            FOUND=false
-            
-            # Look for spatch binaries in multiple locations
-            for name in spatch spatch.byte spatch.opt main.byte main.opt main; do
-                if [ -f "$name" ]; then
-                    echo "Found binary: $name"
-                    cp "$name" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    FOUND=true
-                    break
-                fi
-            done
-            
-            # Search in subdirectories if not found in root
-            if [ "$FOUND" = "false" ]; then
-                echo "Searching for binaries in subdirectories..."
-                BINARY_PATH=$(find . -name "*spatch*" -type f -executable | head -1)
-                if [ -n "$BINARY_PATH" ]; then
-                    echo "Found binary at: $BINARY_PATH"
-                    cp "$BINARY_PATH" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    FOUND=true
-                else
-                    # Look for main binaries
-                    BINARY_PATH=$(find . -name "main*" -type f -executable | head -1)
-                    if [ -n "$BINARY_PATH" ]; then
-                        echo "Found main binary at: $BINARY_PATH"
-                        cp "$BINARY_PATH" /opt/coccinelle/bin/spatch
-                        chmod +x /opt/coccinelle/bin/spatch
-                        FOUND=true
-                    fi
-                fi
-            fi
-            
-            # Last resort: look for any .byte or .opt files
-            if [ "$FOUND" = "false" ]; then
-                echo "Looking for any compiled binaries..."
-                BINARY_PATH=$(find . -name "*.byte" -o -name "*.opt" | grep -v "test" | head -1)
-                if [ -n "$BINARY_PATH" ]; then
-                    echo "Found compiled binary: $BINARY_PATH"
-                    cp "$BINARY_PATH" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    FOUND=true
-                fi
-            fi
-            
-            if [ "$FOUND" = "false" ]; then
-                echo "No spatch binary found, listing all potential files..."
-                echo "Executable files:"
-                find . -type f -executable | grep -E "(spatch|main|cocci)" || true
-                echo "Compiled files:"
-                find . -name "*.byte" -o -name "*.opt" | head -10 || true
-                exit 1
-            fi
-        fi
-        
-        echo "Checking binary type..."
-        if [ -f /opt/coccinelle/bin/spatch ]; then
-            if head -1 /opt/coccinelle/bin/spatch 2>/dev/null | grep -q tcsh; then
-                echo "Converting tcsh script to bash wrapper..."
-                mv /opt/coccinelle/bin/spatch /opt/coccinelle/bin/spatch.tcsh
-                printf '#!/bin/bash\n' > /opt/coccinelle/bin/spatch
-                printf 'SCRIPT_DIR="$(dirname "$0")"\n' >> /opt/coccinelle/bin/spatch
-                printf 'export PATH="/bin:/usr/bin:$PATH"\n' >> /opt/coccinelle/bin/spatch
-                printf 'if command -v tcsh >/dev/null 2>&1; then\n' >> /opt/coccinelle/bin/spatch
-                printf '    exec tcsh "$SCRIPT_DIR/spatch.tcsh" "$@"\n' >> /opt/coccinelle/bin/spatch
-                printf 'elif command -v csh >/dev/null 2>&1; then\n' >> /opt/coccinelle/bin/spatch
-                printf '    exec csh "$SCRIPT_DIR/spatch.tcsh" "$@"\n' >> /opt/coccinelle/bin/spatch
-                printf 'else\n' >> /opt/coccinelle/bin/spatch
-                printf '    echo "Error: tcsh or csh required" >&2\n' >> /opt/coccinelle/bin/spatch
-                printf '    exit 1\n' >> /opt/coccinelle/bin/spatch
-                printf 'fi\n' >> /opt/coccinelle/bin/spatch
-                chmod +x /opt/coccinelle/bin/spatch
-            fi
-        fi
-        
-        echo "Testing..."
-        /opt/coccinelle/bin/spatch --version || /opt/coccinelle/bin/spatch -version || echo "Basic test completed"
-        
-        echo "Creating package..."
-        cd /opt
-        tar -czf coccinelle-1.0.8-ubuntu16-static.tar.gz coccinelle/
-        cp *.tar.gz /output/
-        echo "Package created successfully"
-        SCRIPT_EOF
-        
-        chmod +x build_coccinelle.sh
-
-    - name: Build Coccinelle
-      run: |
-        echo "Starting Docker build..."
-        docker run --rm -v $(pwd)/build_coccinelle.sh:/build_coccinelle.sh -v $(pwd):/output ubuntu:16.04 bash -c "/build_coccinelle.sh"
-    
-    - name: Verify build
-      run: |
-        if ls coccinelle-*.tar.gz 1> /dev/null 2>&1; then
-          PACKAGE=$(ls coccinelle-*.tar.gz | head -1)
-          echo "Package created: $PACKAGE"
-          
-          mkdir -p test_extract
-          tar -xzf $PACKAGE -C test_extract
-          
-          if [ -f test_extract/coccinelle/bin/spatch ]; then
-            echo "spatch binary found in package"
-            
-            echo "Testing compatibility with Ubuntu 16..."
-            docker run --rm -v $(pwd)/test_extract:/test ubuntu:16.04 bash -c "
-              apt-get update && apt-get install -y tcsh csh
-              echo 'Testing spatch:'
-              if /test/coccinelle/bin/spatch --version; then
-                echo 'SUCCESS: Works on Ubuntu 16.04'
-              else
-                echo 'Testing with alternative methods...'
-                /test/coccinelle/bin/spatch -version || echo 'Version check had issues but continuing'
-              fi
-            "
-            
-            echo "PACKAGE_NAME=$PACKAGE" >> $GITHUB_ENV
-          else
-            echo "spatch binary not found"
+            echo "All builds failed"
             exit 1
-          fi
-        else
-          echo "No package found"
-          exit 1
-        fi
-    
-    - name: Create Release
-      if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: coccinelle-1.0.8-${{ github.run_number }}
-        name: "Coccinelle 1.0.8 for Ubuntu 16 (Build ${{ github.run_number }})"
-        body: |
-          # Coccinelle 1.0.8 Static Build for Ubuntu 16
-          
-          **✅ GLIBC Compatibility Verified**: This build has been tested on Ubuntu 16.04 (GLIBC 2.23)
-          
-          This version resolves the `GLIBC_2.29 not found` and `tcsh interpreter` errors.
-          
-          ## 🚀 Quick Installation for QSDK
-          
-          ```bash
-          # Install tcsh first (required)
-          sudo apt-get update && sudo apt-get install -y tcsh
-          
-          # Download and extract
-          cd /home/cassie_xiao
-          wget https://github.com/${{ github.repository }}/releases/latest/download/coccinelle-1.0.8-ubuntu16-static.tar.gz
-          tar -xzf coccinelle-1.0.8-ubuntu16-static.tar.gz
-          
-          # Set up environment
-          export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"
-          echo 'export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"' >> ~/.bashrc
-          
-          # Test
-          spatch --version
-          
-          # Run QSDK build
-          cd /home/cassie_xiao/20250612/qsdk
-          make package/feeds/wlan_open/mac80211/compile
-          ```
-          
-          ## Requirements
-          - Ubuntu 16.04+ (GLIBC 2.23+)
-          - tcsh or csh installed
-          
-          Built: ${{ github.run_date }}
-        files: |
-          coccinelle-*-static.tar.gz
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-ubuntu16-compatible
-        path: coccinelle-*.tar.gz
-        retention-days: 30 | head -1)
-            if [ -n "$BINARY_FOUND" ]; then
-                echo "Found potential binary: $BINARY_FOUND"
-                BUILD_OK=true
-            else
-                echo "No usable binaries found"
-                exit 1
-            fi
         fi
         
         echo "Installing..."
@@ -552,8 +275,7 @@ jobs:
           - tcsh or csh installed
           
           Built: ${{ github.run_date }}
-        files: |
-          coccinelle-*-static.tar.gz
+        files: coccinelle-*-static.tar.gz
         draft: false
         prerelease: false
       env:
