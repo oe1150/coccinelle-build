@@ -12,7 +12,7 @@ jobs:
     container: ubuntu:16.04
     
     steps:
-    - name: Download pre-compiled Coccinelle
+    - name: Download and Create Release
       run: |
         export DEBIAN_FRONTEND=noninteractive
         apt-get update -qq
@@ -101,6 +101,7 @@ jobs:
         
         # 創建可攜式包
         echo "Creating portable package..."
+        cd /
         rm -rf portable-coccinelle
         mkdir -p portable-coccinelle/bin
         mkdir -p portable-coccinelle/lib
@@ -147,7 +148,7 @@ jobs:
         # 創建軟連結
         cd portable-coccinelle
         ln -sf spatch.sh spatch
-        cd ..
+        cd /
         
         # 創建 README
         FINAL_VERSION=$($SPATCH_PATH --version 2>/dev/null | head -1 || echo "Unknown")
@@ -167,11 +168,24 @@ jobs:
         
         # 打包
         tar -czf coccinelle-precompiled.tar.gz portable-coccinelle/
+        echo "Package created: coccinelle-precompiled.tar.gz"
         echo "Package size: $(du -h coccinelle-precompiled.tar.gz | cut -f1)"
         echo "Final version: $FINAL_VERSION"
-
-    - name: Create Release
-      run: |
+        
+        # 檢查文件確實存在
+        if [ -f "coccinelle-precompiled.tar.gz" ]; then
+            echo "✅ Package file exists!"
+            ls -la coccinelle-precompiled.tar.gz
+        else
+            echo "❌ Package file missing!"
+            exit 1
+        fi
+        
+        # 立即創建 Release
+        echo "========================================="
+        echo "Creating GitHub Release..."
+        echo "========================================="
+        
         RELEASE_TAG="coccinelle-precompiled-$(date +%Y%m%d-%H%M%S)"
         RELEASE_NAME="Coccinelle Pre-compiled $(date +%Y-%m-%d)"
         
@@ -181,7 +195,7 @@ jobs:
         echo "  \"tag_name\": \"$RELEASE_TAG\"," >> payload.json
         echo "  \"target_commitish\": \"main\"," >> payload.json
         echo "  \"name\": \"$RELEASE_NAME\"," >> payload.json
-        echo "  \"body\": \"Pre-compiled Coccinelle package for Ubuntu 16.04+ (GLIBC 2.23+)\"," >> payload.json
+        echo "  \"body\": \"Pre-compiled Coccinelle package for Ubuntu 16.04+ (GLIBC 2.23+). Version: $FINAL_VERSION\"," >> payload.json
         echo "  \"draft\": false," >> payload.json
         echo "  \"prerelease\": false" >> payload.json
         echo "}" >> payload.json
@@ -203,7 +217,7 @@ jobs:
           echo "Upload URL: $UPLOAD_URL"
           echo "Release URL: $RELEASE_HTML_URL"
           
-          # 檢查文件是否存在
+          # 再次檢查文件
           if [ -f "coccinelle-precompiled.tar.gz" ]; then
             echo "File exists, size: $(du -h coccinelle-precompiled.tar.gz | cut -f1)"
             
