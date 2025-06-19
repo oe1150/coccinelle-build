@@ -165,18 +165,18 @@ jobs:
         fi
         
         # 創建啟動腳本
-        cat > portable-coccinelle/spatch.sh << 'EOF'
-        #!/bin/bash
-        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-        
-        # 設置環境變數
-        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
-        export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-        export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/lib/coccinelle/python:$SCRIPT_DIR/python"
-        
-        # 執行 spatch
-        exec "$SCRIPT_DIR/bin/spatch" "$@"
-        EOF
+        cat > portable-coccinelle/spatch.sh << 'LAUNCHER_EOF'
+#!/bin/bash
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
+# 設置環境變數
+export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
+export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/lib/coccinelle/python:$SCRIPT_DIR/python"
+
+# 執行 spatch
+exec "$SCRIPT_DIR/bin/spatch" "$@"
+LAUNCHER_EOF
         
         chmod +x portable-coccinelle/spatch.sh
         chmod +x portable-coccinelle/bin/spatch
