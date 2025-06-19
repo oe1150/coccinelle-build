@@ -13,271 +13,215 @@ jobs:
     steps:
     - name: Build Coccinelle 1.0.7+ with GLIBC 2.23 compatibility
       run: |
-        echo "========================================="
         echo "Building Coccinelle 1.0.7+ for GLIBC 2.23"
-        echo "========================================="
         
-        # 安裝依賴
         apt-get update -qq
-        apt-get install -y -qq \
-          build-essential \
-          wget curl tar ca-certificates \
-          docker.io
+        apt-get install -y -qq build-essential wget curl tar ca-certificates docker.io
         
-        # 啟動 Docker 服務
         service docker start
         
-        # 使用 Docker 在 Ubuntu 16.04 環境中編譯
-        cat > Dockerfile << 'DOCKERFILE'
-FROM ubuntu:16.04
-
-# 安裝編譯依賴
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    ocaml \
-    ocaml-native-compilers \
-    ocaml-findlib \
-    libpcre3-dev \
-    pkg-config \
-    python3-dev \
-    python3-setuptools \
-    wget \
-    curl \
-    tar \
-    ca-certificates \
-    autoconf \
-    automake \
-    libtool \
-    m4 \
-    git
-
-WORKDIR /build
-
-# 編譯腳本
-COPY build_script.sh /build/
-RUN chmod +x /build/build_script.sh
-RUN ./build_script.sh
-
-# 創建可攜式包
-COPY package_script.sh /build/
-RUN chmod +x /build/package_script.sh
-RUN ./package_script.sh
-DOCKERFILE
-
-        # 創建編譯腳本
-        cat > build_script.sh << 'BUILDSCRIPT'
-#!/bin/bash
-set -e
-
-echo "Building Coccinelle 1.0.7+ from source..."
-
-# 嘗試編譯 1.0.8，失敗則嘗試 1.0.7
-for VERSION in "1.0.8" "1.0.7"; do
-    echo "========================================="
-    echo "Attempting Coccinelle $VERSION"
-    echo "========================================="
-    
-    cd /build
-    rm -rf coccinelle-*
-    
-    # 下載源碼
-    wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
-    tar -xzf $VERSION.tar.gz
-    cd coccinelle-$VERSION
-    
-    echo "OCaml version: $(ocaml -version)"
-    echo "Available OCaml packages:"
-    ocamlfind list | grep -E "(unix|str|pcre)" || echo "Some packages missing"
-    
-    # 生成配置文件
-    echo "Running autogen..."
-    if [ -f autogen ]; then
-        ./autogen
-    elif [ -f autogen.sh ]; then
-        ./autogen.sh
-    else
-        autoreconf -fiv
-    fi
-    
-    # 配置 - 針對兼容性
-    echo "Configuring..."
-    if ./configure \
-        --prefix=/usr/local \
-        --disable-opt \
-        --disable-pcre \
-        --enable-python \
-        --with-python=python3 \
-        CFLAGS="-O2 -g" \
-        LDFLAGS="-Wl,--no-as-needed"; then
+        echo "Creating Dockerfile..."
+        cat > Dockerfile << 'EOF_DOCKERFILE'
+        FROM ubuntu:16.04
         
-        echo "✅ Configure successful for $VERSION"
+        RUN apt-get update && apt-get install -y \
+            build-essential \
+            ocaml \
+            ocaml-native-compilers \
+            ocaml-findlib \
+            libpcre3-dev \
+            pkg-config \
+            python3-dev \
+            python3-setuptools \
+            wget \
+            curl \
+            tar \
+            ca-certificates \
+            autoconf \
+            automake \
+            libtool \
+            m4 \
+            git
         
-        # 編譯
-        echo "Building..."
-        if make -j$(nproc); then
-            echo "✅ Build successful for $VERSION!"
+        WORKDIR /build
+        
+        COPY build_script.sh /build/
+        RUN chmod +x /build/build_script.sh
+        RUN ./build_script.sh
+        
+        COPY package_script.sh /build/
+        RUN chmod +x /build/package_script.sh
+        RUN ./package_script.sh
+        EOF_DOCKERFILE
+        
+        echo "Creating build script..."
+        cat > build_script.sh << 'EOF_BUILD'
+        #!/bin/bash
+        set -e
+        
+        echo "Building Coccinelle 1.0.7+ from source..."
+        
+        for VERSION in "1.0.8" "1.0.7"; do
+            echo "Attempting Coccinelle $VERSION"
             
-            # 檢查編譯結果
-            if [ -f spatch ]; then
-                echo "Testing spatch..."
-                ./spatch --version
-                
-                # 安裝
-                make install
-                
-                echo "✅ Coccinelle $VERSION installed successfully!"
-                /usr/local/bin/spatch --version
-                
-                # 記錄成功版本
-                echo "$VERSION" > /build/SUCCESS_VERSION
-                break
+            cd /build
+            rm -rf coccinelle-*
+            
+            wget https://github.com/coccinelle/coccinelle/archive/refs/tags/$VERSION.tar.gz
+            tar -xzf $VERSION.tar.gz
+            cd coccinelle-$VERSION
+            
+            echo "OCaml version: $(ocaml -version)"
+            
+            if [ -f autogen ]; then
+                ./autogen
+            elif [ -f autogen.sh ]; then
+                ./autogen.sh
             else
-                echo "❌ No spatch executable generated for $VERSION"
+                autoreconf -fiv
             fi
-        else
-            echo "❌ Build failed for $VERSION"
+            
+            if ./configure --prefix=/usr/local --disable-opt --disable-pcre --enable-python --with-python=python3; then
+                echo "Configure successful for $VERSION"
+                
+                if make -j$(nproc); then
+                    echo "Build successful for $VERSION"
+                    
+                    if [ -f spatch ]; then
+                        echo "Testing spatch..."
+                        ./spatch --version
+                        
+                        make install
+                        
+                        echo "Coccinelle $VERSION installed successfully"
+                        /usr/local/bin/spatch --version
+                        
+                        echo "$VERSION" > /build/SUCCESS_VERSION
+                        break
+                    else
+                        echo "No spatch executable generated for $VERSION"
+                    fi
+                else
+                    echo "Build failed for $VERSION"
+                fi
+            else
+                echo "Configure failed for $VERSION"
+            fi
+        done
+        
+        if [ ! -f /build/SUCCESS_VERSION ]; then
+            echo "All versions failed to build"
+            exit 1
         fi
-    else
-        echo "❌ Configure failed for $VERSION"
-    fi
-done
-
-# 檢查是否有成功的版本
-if [ ! -f /build/SUCCESS_VERSION ]; then
-    echo "❌ All versions failed to build"
-    exit 1
-fi
-
-echo "✅ Successfully built Coccinelle $(cat /build/SUCCESS_VERSION)"
-BUILDSCRIPT
-
-        # 創建打包腳本
-        cat > package_script.sh << 'PACKAGESCRIPT'
-#!/bin/bash
-set -e
-
-echo "Creating portable package..."
-
-SUCCESS_VERSION=$(cat /build/SUCCESS_VERSION)
-SPATCH_PATH="/usr/local/bin/spatch"
-
-# 檢查安裝的版本
-echo "Installed version: $($SPATCH_PATH --version | head -1)"
-
-# 創建可攜式包目錄
-cd /build
-rm -rf portable-coccinelle
-mkdir -p portable-coccinelle/{bin,lib,share,python}
-
-# 複製 spatch 二進制
-cp "$SPATCH_PATH" portable-coccinelle/bin/
-
-# 複製庫文件
-if [ -d /usr/local/lib/coccinelle ]; then
-    cp -r /usr/local/lib/coccinelle portable-coccinelle/lib/
-    echo "✅ Copied coccinelle libraries"
-fi
-
-# 複製配置文件
-if [ -d /usr/local/share/coccinelle ]; then
-    cp -r /usr/local/share/coccinelle portable-coccinelle/share/
-    echo "✅ Copied coccinelle configuration"
-fi
-
-# 複製 OCaml 庫
-for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
-    if [ -d "$ocaml_dir" ]; then
-        cp -r "$ocaml_dir" portable-coccinelle/lib/
-        echo "✅ Copied OCaml libraries from $ocaml_dir"
-        break
-    fi
-done
-
-# 複製 Python 模組
-if [ -d /usr/local/lib/python*/site-packages ]; then
-    cp -r /usr/local/lib/python*/site-packages/coccinelle portable-coccinelle/python/ 2>/dev/null || true
-    echo "✅ Copied Python modules"
-fi
-
-# 創建啟動腳本
-cat > portable-coccinelle/spatch.sh << 'LAUNCHER'
-#!/bin/bash
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-
-# 設置環境變數
-export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
-export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
-export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/lib/coccinelle/python:$SCRIPT_DIR/python"
-
-# 執行 spatch
-exec "$SCRIPT_DIR/bin/spatch" "$@"
-LAUNCHER
-
-chmod +x portable-coccinelle/spatch.sh
-chmod +x portable-coccinelle/bin/spatch
-
-# 創建直接可執行的 spatch
-cp portable-coccinelle/spatch.sh portable-coccinelle/spatch
-
-# 測試可攜式版本
-echo "Testing portable version..."
-./portable-coccinelle/spatch.sh --version
-
-# 檢查依賴
-echo "Binary dependencies:"
-ldd portable-coccinelle/bin/spatch | head -10
-
-# 打包
-tar -czf "coccinelle-${SUCCESS_VERSION}-portable.tar.gz" portable-coccinelle/
-
-echo "✅ Package created: coccinelle-${SUCCESS_VERSION}-portable.tar.gz"
-echo "Package size: $(du -h coccinelle-${SUCCESS_VERSION}-portable.tar.gz | cut -f1)"
-PACKAGESCRIPT
-
-        # 建置 Docker 鏡像並運行
+        
+        echo "Successfully built Coccinelle $(cat /build/SUCCESS_VERSION)"
+        EOF_BUILD
+        
+        echo "Creating package script..."
+        cat > package_script.sh << 'EOF_PACKAGE'
+        #!/bin/bash
+        set -e
+        
+        echo "Creating portable package..."
+        
+        SUCCESS_VERSION=$(cat /build/SUCCESS_VERSION)
+        SPATCH_PATH="/usr/local/bin/spatch"
+        
+        echo "Installed version: $($SPATCH_PATH --version | head -1)"
+        
+        cd /build
+        rm -rf portable-coccinelle
+        mkdir -p portable-coccinelle/bin
+        mkdir -p portable-coccinelle/lib
+        mkdir -p portable-coccinelle/share
+        mkdir -p portable-coccinelle/python
+        
+        cp "$SPATCH_PATH" portable-coccinelle/bin/
+        
+        if [ -d /usr/local/lib/coccinelle ]; then
+            cp -r /usr/local/lib/coccinelle portable-coccinelle/lib/
+            echo "Copied coccinelle libraries"
+        fi
+        
+        if [ -d /usr/local/share/coccinelle ]; then
+            cp -r /usr/local/share/coccinelle portable-coccinelle/share/
+            echo "Copied coccinelle configuration"
+        fi
+        
+        for ocaml_dir in /usr/lib/ocaml /usr/lib/x86_64-linux-gnu/ocaml; do
+            if [ -d "$ocaml_dir" ]; then
+                cp -r "$ocaml_dir" portable-coccinelle/lib/
+                echo "Copied OCaml libraries from $ocaml_dir"
+                break
+            fi
+        done
+        
+        if [ -d /usr/local/lib/python*/site-packages ]; then
+            cp -r /usr/local/lib/python*/site-packages/coccinelle portable-coccinelle/python/ 2>/dev/null || true
+            echo "Copied Python modules"
+        fi
+        
+        cat > portable-coccinelle/spatch.sh << 'EOF_LAUNCHER'
+        #!/bin/bash
+        SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+        
+        export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$SCRIPT_DIR/lib/ocaml:$LD_LIBRARY_PATH"
+        export OCAML_TOPLEVEL_PATH="$SCRIPT_DIR/lib/ocaml"
+        export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$SCRIPT_DIR/lib/coccinelle/python:$SCRIPT_DIR/python"
+        
+        exec "$SCRIPT_DIR/bin/spatch" "$@"
+        EOF_LAUNCHER
+        
+        chmod +x portable-coccinelle/spatch.sh
+        chmod +x portable-coccinelle/bin/spatch
+        
+        cp portable-coccinelle/spatch.sh portable-coccinelle/spatch
+        
+        echo "Testing portable version..."
+        ./portable-coccinelle/spatch.sh --version
+        
+        echo "Binary dependencies:"
+        ldd portable-coccinelle/bin/spatch | head -10
+        
+        tar -czf "coccinelle-${SUCCESS_VERSION}-portable.tar.gz" portable-coccinelle/
+        
+        echo "Package created: coccinelle-${SUCCESS_VERSION}-portable.tar.gz"
+        echo "Package size: $(du -h coccinelle-${SUCCESS_VERSION}-portable.tar.gz | cut -f1)"
+        EOF_PACKAGE
+        
         echo "Building Docker image..."
         docker build -t coccinelle-builder .
         
         echo "Running build in Docker..."
         docker run --name coccinelle-build coccinelle-builder
         
-        # 從容器中複製結果
         echo "Copying build results..."
         docker cp coccinelle-build:/build/coccinelle-*-portable.tar.gz ./
         docker cp coccinelle-build:/build/SUCCESS_VERSION ./
         
-        # 檢查結果
         if [ -f "SUCCESS_VERSION" ]; then
             SUCCESS_VERSION=$(cat SUCCESS_VERSION)
             PACKAGE_FILE="coccinelle-${SUCCESS_VERSION}-portable.tar.gz"
             
             if [ -f "$PACKAGE_FILE" ]; then
-                echo "✅ Build successful!"
+                echo "Build successful!"
                 echo "Version: $SUCCESS_VERSION"
                 echo "Package: $PACKAGE_FILE"
                 echo "Size: $(du -h $PACKAGE_FILE | cut -f1)"
                 
-                # 創建 GitHub Release
                 echo "Creating GitHub Release..."
                 
                 RELEASE_TAG="coccinelle-${SUCCESS_VERSION}-$(date +%Y%m%d-%H%M%S)"
                 RELEASE_NAME="Coccinelle ${SUCCESS_VERSION} (GLIBC 2.23 Compatible)"
                 
-                cat > payload.json << 'JSONPAYLOAD'
-{
-  "tag_name": "REPLACE_TAG",
-  "target_commitish": "main", 
-  "name": "REPLACE_NAME",
-  "body": "REPLACE_BODY",
-  "draft": false,
-  "prerelease": false
-}
-JSONPAYLOAD
-                
-                # 替換佔位符
-                sed -i "s/REPLACE_TAG/$RELEASE_TAG/" payload.json
-                sed -i "s/REPLACE_NAME/$RELEASE_NAME/" payload.json
-                sed -i "s/REPLACE_BODY/Coccinelle $SUCCESS_VERSION Portable Package/" payload.json
+                echo "{" > payload.json
+                echo "  \"tag_name\": \"$RELEASE_TAG\"," >> payload.json
+                echo "  \"target_commitish\": \"main\"," >> payload.json  
+                echo "  \"name\": \"$RELEASE_NAME\"," >> payload.json
+                echo "  \"body\": \"Coccinelle $SUCCESS_VERSION Portable Package for Ubuntu 16.04+ (GLIBC 2.23+)\"," >> payload.json
+                echo "  \"draft\": false," >> payload.json
+                echo "  \"prerelease\": false" >> payload.json
+                echo "}" >> payload.json
                 
                 RELEASE_RESPONSE=$(curl -s -w "HTTP_CODE:%{http_code}" -X POST \
                   -H "Authorization: token $GITHUB_TOKEN" \
@@ -302,29 +246,25 @@ JSONPAYLOAD
                     UPLOAD_HTTP_CODE=$(echo "$UPLOAD_RESPONSE" | grep -o "HTTP_CODE:[0-9]*" | cut -d: -f2)
                     
                     if [ "$UPLOAD_HTTP_CODE" = "201" ]; then
-                        echo "========================================="
-                        echo "🎉 SUCCESS! Coccinelle $SUCCESS_VERSION"
-                        echo "========================================="
+                        echo "SUCCESS! Coccinelle $SUCCESS_VERSION"
                         echo "Release: $RELEASE_HTML_URL"
                         echo "Package: $PACKAGE_FILE"
                         echo "Compatible with: Ubuntu 16.04+ (GLIBC 2.23+)"
-                        echo "========================================="
                     else
-                        echo "❌ Upload failed"
+                        echo "Upload failed"
                     fi
                 else
-                    echo "❌ Release creation failed"
+                    echo "Release creation failed"
                 fi
             else
-                echo "❌ Package file not found"
+                echo "Package file not found"
                 exit 1
             fi
         else
-            echo "❌ Build failed - no success version"
+            echo "Build failed - no success version"
             exit 1
         fi
         
-        # 清理
         docker rm coccinelle-build || true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
