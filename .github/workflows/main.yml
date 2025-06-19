@@ -1,390 +1,61 @@
-name: Build Static Coccinelle for Ubuntu 16
+name: Build Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
 
 permissions:
   contents: write
-  
+
 jobs:
   build:
-    runs-on: ubuntu-22.04
-    
+    runs-on: ubuntu-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Build Static Coccinelle 1.0.8 for Ubuntu 16
-      run: |
-        echo "🚀 Building Coccinelle 1.0.8 for Ubuntu 16 compatibility..."
-        
-        cat > build_coccinelle.sh << 'EOF'
-        #!/bin/bash
-        set -ex
-        
-        echo "🔍 Checking GLIBC version..."
-        ldd --version
-        echo "Target: Ubuntu 16.04 (GLIBC 2.23)"
-        
-        echo "📦 Installing build dependencies..."
-        apt-get update
-        apt-get install -y \
-            build-essential \
-            ocaml \
-            ocaml-native-compilers \
-            ocaml-findlib \
-            camlp4 \
-            libpcre3-dev \
-            pkg-config \
-            autoconf \
-            automake \
-            libtool \
-            m4 \
-            wget \
-            curl \
-            python-dev \
-            python3-dev || true
-        
-        echo "📥 Downloading Coccinelle 1.0.8..."
-        cd /tmp
-        wget -O coccinelle-1.0.8.tar.gz https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.8.tar.gz
-        tar -xzf coccinelle-1.0.8.tar.gz
-        cd coccinelle-1.0.8
-        
-        echo "🔧 Configuring build for maximum compatibility..."
-        # 生成configure脚本
-        if [ -f autogen ]; then
-            ./autogen
-        elif [ -f autogen.sh ]; then
-            ./autogen.sh
-        else
-            autoreconf -fiv
-        fi
-        
-        # 针对Ubuntu 16的特殊配置 - 完全静态链接
-        export CFLAGS="-static-libgcc -static-libstdc++ -O2 -fPIC"
-        export LDFLAGS="-static-libgcc -static-libstdc++ -Wl,--as-needed"
-        export OCAMLOPT="ocamlopt -ccopt -static-libgcc"
-        
-        # 配置选项 - 禁用可能导致GLIBC依赖的功能
-        ./configure \
-            --prefix=/opt/coccinelle \
-            --disable-python \
-            --disable-pcre \
-            --disable-opt \
-            --enable-release \
-            --without-python \
-            CC="gcc" \
-            CXX="g++"
-        
-        echo "🔨 Building Coccinelle with static linking..."
-        # 尝试多种构建方法
-        BUILD_SUCCESS=false
-        
-        # 方法1: 标准构建
-        echo "🔄 Trying standard build..."
-        if make -j1; then
-            echo "✅ Standard build successful!"
-            BUILD_SUCCESS=true
-        else
-            echo "❌ Standard build failed, trying alternatives..."
-            
-            # 方法2: 只构建必要组件
-            echo "🔄 Trying core components build..."
-            make clean
-            if make depend && make all-dev -j1; then
-                echo "✅ Core components build successful!"
-                BUILD_SUCCESS=true
-            else
-                echo "❌ Core build failed, trying bytecode..."
-                
-                # 方法3: 构建字节码版本
-                echo "🔄 Trying bytecode build..."
-                make clean
-                if make depend && make all -j1; then
-                    echo "✅ Bytecode build successful!"
-                    BUILD_SUCCESS=true
-                else
-                    echo "❌ All build methods failed, trying manual build..."
-                    
-                    # 方法4: 手动构建关键模块
-                    make clean
-                    echo "🔄 Building essential modules manually..."
-                    
-                    # 构建基础库
-                    (cd commons && make && make install-libs) || true
-                    (cd parsing_c && make && make install-libs) || true
-                    (cd parsing_cocci && make && make install-libs) || true
-                    (cd engine && make && make install-libs) || true
-                    (cd popl09 && make && make install-libs) || true
-                    (cd extra && make && make install-libs) || true
-                    
-                    # 尝试构建主程序
-                    if make spatch.byte -j1 || make spatch -j1; then
-                        echo "✅ Manual build successful!"
-                        BUILD_SUCCESS=true
-                    fi
-                fi
-            fi
-        fi
-        
-        if [ "$BUILD_SUCCESS" = "false" ]; then
-            echo "❌ All build attempts failed"
-            echo "Available make targets:"
-            make help || true
-            make -n all || true
-            exit 1
-        fi
-        
-        echo "📦 Installing..."
-        if make install; then
-            echo "✅ Installation successful!"
-        else
-            echo "⚠️  Standard install failed, trying manual install..."
-            mkdir -p /opt/coccinelle/bin
-            mkdir -p /opt/coccinelle/lib/coccinelle
-            mkdir -p /opt/coccinelle/share/coccinelle
-            
-            # 查找并复制spatch二进制文件 (多种可能的名称)
-            SPATCH_FOUND=false
-            
-            for spatch_name in spatch spatch.byte spatch.opt main.byte main.opt; do
-                if [ -f "$spatch_name" ]; then
-                    echo "Found spatch binary: $spatch_name"
-                    cp "$spatch_name" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    SPATCH_FOUND=true
-                    break
-                fi
-            done
-            
-            if [ "$SPATCH_FOUND" = "false" ]; then
-                echo "Searching for spatch in subdirectories..."
-                find . -name "*spatch*" -type f -executable | head -5
-                
-                SPATCH_PATH=$(find . -name "*spatch*" -type f -executable | head -1)
-                if [ -n "$SPATCH_PATH" ]; then
-                    echo "Using found spatch: $SPATCH_PATH"
-                    cp "$SPATCH_PATH" /opt/coccinelle/bin/spatch
-                    chmod +x /opt/coccinelle/bin/spatch
-                    SPATCH_FOUND=true
-                fi
-            fi
-            
-            if [ "$SPATCH_FOUND" = "false" ]; then
-                echo "❌ Cannot find any spatch binary!"
-                echo "Available files:"
-                find . -name "*spatch*" -o -name "main*" | head -10
-                exit 1
-            fi
-            
-            # 复制标准库文件 (如果存在)
-            if [ -d "standard.h" ] || [ -f "standard.h" ]; then
-                cp -r standard.h /opt/coccinelle/share/coccinelle/ 2>/dev/null || true
-            fi
-            
-            # 复制python相关文件 (如果存在)
-            if [ -d "python" ]; then
-                cp -r python /opt/coccinelle/lib/coccinelle/ 2>/dev/null || true
-            fi
-            
-            echo "✅ Manual installation completed"
-        fi
-        
-        echo "✅ Testing installation..."
-        # 检查二进制文件是否存在
-        if [ ! -f /opt/coccinelle/bin/spatch ]; then
-            echo "❌ spatch binary not found after installation!"
-            ls -la /opt/coccinelle/bin/ || true
-            exit 1
-        fi
-        
-        # 检查二进制文件的依赖
-        echo "📋 Binary dependencies:"
-        ldd /opt/coccinelle/bin/spatch || echo "Static binary (no dynamic dependencies - GOOD!)"
-        
-        # 测试版本 - 使用多种方法
-        echo "🧪 Testing spatch functionality..."
-        VERSION_OUTPUT=""
-        
-        if VERSION_OUTPUT=$(/opt/coccinelle/bin/spatch --version 2>&1); then
-            echo "✅ Version check successful:"
-            echo "$VERSION_OUTPUT"
-        elif VERSION_OUTPUT=$(/opt/coccinelle/bin/spatch -version 2>&1); then
-            echo "✅ Version check successful (alternative flag):"
-            echo "$VERSION_OUTPUT"
-        elif VERSION_OUTPUT=$(/opt/coccinelle/bin/spatch --help 2>&1 | head -5); then
-            echo "✅ Help output (version check failed but binary works):"
-            echo "$VERSION_OUTPUT"
-        else
-            echo "⚠️  Direct version check failed, testing basic functionality..."
-            if /opt/coccinelle/bin/spatch 2>&1 | grep -i "coccinelle\|spatch\|usage" >/dev/null; then
-                echo "✅ Binary appears functional"
-                VERSION_OUTPUT="Coccinelle 1.0.8+ (functional)"
-            else
-                echo "❌ Binary test failed"
-                echo "Error output:"
-                /opt/coccinelle/bin/spatch 2>&1 | head -10 || true
-                exit 1
-            fi
-        fi
-        
-        # 验证版本是否满足要求 (>= 1.0.7)
-        VERSION=$(echo "$VERSION_OUTPUT" | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -1 || echo "1.0.8")
-        echo "Detected version: $VERSION"
-        
-        # 验证是否与Ubuntu 16兼容
-        echo "🧪 Compatibility test..."
-        echo "Built on GLIBC: $(ldd --version | head -1)"
-        
-        # 创建便携式包
-        echo "📦 Creating portable package..."
-        cd /opt
-        
-        # 最终检查
-        echo "📋 Final dependency check:"
-        ldd /opt/coccinelle/bin/spatch || echo "✅ No dynamic dependencies (fully static)"
-        
-        # 打包
-        tar -czf coccinelle-1.0.8-ubuntu16-static.tar.gz coccinelle/
-        
-        echo "✅ Package created successfully!"
-        ls -la *.tar.gz
-        
-        # 移动到输出目录
-        cp *.tar.gz /output/
-        EOF
-        
-        chmod +x build_coccinelle.sh
-        
-        echo "🐳 Starting Docker build..."
-        # 使用Ubuntu 16.04进行构建以确保GLIBC兼容性
-        docker run --rm \
-            -v $(pwd)/build_coccinelle.sh:/build_coccinelle.sh \
-            -v $(pwd):/output \
-            ubuntu:16.04 \
-            bash -c "/build_coccinelle.sh"
-    
-    - name: Verify build
-      run: |
-        if ls coccinelle-*.tar.gz 1> /dev/null 2>&1; then
-          PACKAGE=$(ls coccinelle-*.tar.gz | head -1)
-          echo "✅ Package created: $PACKAGE"
-          echo "📊 Package size: $(du -h $PACKAGE | cut -f1)"
-          
-          # 测试提取和兼容性
-          mkdir -p test_extract
-          tar -xzf $PACKAGE -C test_extract
-          
-          if [ -f test_extract/coccinelle/bin/spatch ]; then
-            echo "✅ spatch binary found in package"
-            
-            # 使用Ubuntu 16容器测试兼容性
-            echo "🧪 Testing GLIBC compatibility with Ubuntu 16..."
-            docker run --rm -v $(pwd)/test_extract:/test ubuntu:16.04 bash -c "
-              echo 'Ubuntu 16.04 GLIBC version:'
-              ldd --version
-              echo 'Testing spatch binary:'
-              if /test/coccinelle/bin/spatch --version; then
-                echo '✅ SUCCESS: Binary works on Ubuntu 16.04!'
-              else
-                echo '❌ FAILED: Binary incompatible with Ubuntu 16.04'
-                echo 'Dependencies:'
-                ldd /test/coccinelle/bin/spatch || echo 'Static binary'
-                exit 1
-              fi
-            "
-            
-            echo "PACKAGE_NAME=$PACKAGE" >> $GITHUB_ENV
-          else
-            echo "❌ spatch binary not found in package"
-            exit 1
-          fi
-        else
-          echo "❌ No package file found"
-          exit 1
-        fi
-    
-    - name: Create Release
-      if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: coccinelle-1.0.8-${{ github.run_number }}
-        name: "Coccinelle 1.0.8 for Ubuntu 16 (Build ${{ github.run_number }})"
-        body: |
-          # Coccinelle 1.0.8 Static Build for Ubuntu 16
-          
-          **✅ GLIBC Compatibility Verified**: This build has been tested on Ubuntu 16.04 (GLIBC 2.23)
-          
-          This is a statically compiled version of Coccinelle 1.0.8 that is compatible with Ubuntu 16.04 and older GLIBC versions. It solves the `GLIBC_2.29' not found` error.
-          
-          ## 🚀 Quick Installation for QSDK
-          
-          ```bash
-          # Download and extract (replace URL with actual release URL)
-          cd /home/cassie_xiao
-          wget https://github.com/${{ github.repository }}/releases/latest/download/coccinelle-1.0.8-ubuntu16-static.tar.gz
-          tar -xzf coccinelle-1.0.8-ubuntu16-static.tar.gz
-          
-          # Set up environment
-          export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"
-          echo 'export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"' >> ~/.bashrc
-          
-          # Verify installation
-          spatch --version
-          # Should show version >= 1.0.8
-          
-          # Test QSDK build
-          cd /home/cassie_xiao/20250612/qsdk
-          make package/feeds/wlan_open/mac80211/compile
-          ```
-          
-          ## 🔧 Technical Details
-          
-          - **Built on**: Ubuntu 16.04 (GLIBC 2.23)
-          - **Target**: Ubuntu 16.04+ systems
-          - **Static linking**: Minimized GLIBC dependencies
-          - **Version**: 1.0.8 (satisfies >= 1.0.7 requirement)
-          
-          ## ❓ Troubleshooting
-          
-          If you still encounter GLIBC errors:
-          
-          1. **Check your system GLIBC**:
-             ```bash
-             ldd --version
-             ```
-          
-          2. **Verify spatch dependencies**:
-             ```bash
-             ldd /home/cassie_xiao/coccinelle/bin/spatch
-             ```
-          
-          3. **Alternative path setup**:
-             ```bash
-             # Add to your shell profile
-             echo 'export PATH="/home/cassie_xiao/coccinelle/bin:$PATH"' >> ~/.profile
-             source ~/.profile
-             ```
-          
-          Built on: ${{ github.run_date }}  
-          Commit: ${{ github.sha }}
-          
-          **Compatibility tested**: ✅ Ubuntu 16.04
-        files: |
-          coccinelle-*-static.tar.gz
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: coccinelle-ubuntu16-compatible
-        path: coccinelle-*.tar.gz
-        retention-days: 30
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Static Spatch in Docker (Debian Jessie)
+        run: |
+          echo "=== Building static spatch in Debian Jessie ==="
+          mkdir -p output
+
+          cat > Dockerfile <<'EOF'
+FROM debian:jessie
+RUN apt-get update && apt-get install -y \
+  build-essential \
+  ocaml \
+  ocaml-findlib \
+  ocaml-native-compilers \
+  libpcre3-dev \
+  pkg-config \
+  autoconf \
+  automake \
+  libtool \
+  m4 \
+  curl \
+  wget \
+  ca-certificates
+
+WORKDIR /src
+RUN wget https://github.com/coccinelle/coccinelle/archive/refs/tags/1.0.7.tar.gz && \
+    tar -xzf 1.0.7.tar.gz && cd coccinelle-1.0.7 && \
+    ./autogen && \
+    ./configure --prefix=/opt/spatch --disable-python --disable-pcre CC="gcc -static" LDFLAGS="-static" && \
+    make -j1 && make install
+
+RUN cd /opt && \
+    tar -czf /src/spatch-1.0.7-static.tar.gz spatch
+EOF
+
+          docker build -t spatch-builder .
+          docker create --name extract spatch-builder
+          docker cp extract:/src/spatch-1.0.7-static.tar.gz ./output/
+          docker rm extract
+
+      - name: Upload Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: spatch-1.0.7-static
+          name: Static Spatch 1.0.7 (GLIBC 2.23 Compatible)
+          files: output/spatch-1.0.7-static.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
